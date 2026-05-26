@@ -157,6 +157,8 @@ Scoring modes:
 - `context_weighted`: `score_v2_context_weighted`; rank weights are multiplied by citation-context support weights when citation contexts are available.
 - `flat`: every valid selected reference receives one point.
 
+For the scoring formulas, aggregation rules, audit artifacts, and limitations, see [docs/scoring-method.md](docs/scoring-method.md).
+
 To see context weighting on a minimal fixture:
 
 ```bash
