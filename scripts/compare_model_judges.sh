@@ -85,11 +85,16 @@ PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli compare-gold-targets 
   "${CANDIDATE_OUTPUT}" \
   --output "${COMPARISON_OUTPUT}"
 
+PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli model-selection-decision \
+  "${COMPARISON_OUTPUT}"
+
 test -s "${OUTPUT}/base/reports/gold_evaluation.json"
 test -s "${OUTPUT}/candidate/reports/gold_evaluation.json"
 test -s "${OUTPUT}/comparison/benchmark_comparison.md"
 test -s "${OUTPUT}/comparison/target_comparison.json"
 test -s "${OUTPUT}/comparison/target_changes.csv"
 test -s "${OUTPUT}/comparison/target_comparison.md"
+test -s "${OUTPUT}/comparison/model_selection_decision.json"
+test -s "${OUTPUT}/comparison/model_selection_decision.md"
 
 echo "Model judge comparison complete: ${OUTPUT}"
