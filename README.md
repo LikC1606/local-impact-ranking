@@ -36,6 +36,8 @@ Use JSONL with one paper per line:
 
 References should include stable `reference_id` values when available. Missing reference IDs are filled during normalization.
 
+For the full schema, citation-context format, and benchmark gold-label conventions, see [docs/input-schema.md](docs/input-schema.md).
+
 If your data starts as CSV, convert it to the canonical JSONL format first:
 
 ```bash
