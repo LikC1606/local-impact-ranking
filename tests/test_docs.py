@@ -28,6 +28,9 @@ def test_scoring_method_doc_covers_versions_weights_and_limits():
     assert "flat" in text
     assert "1.0, 0.8, 0.6, 0.4, 0.2" in text
     assert "1.5" in text
+    assert "core_score" in text
+    assert "expanded_score" in text
+    assert "log2(rank + 1)" in text
     assert "normalized_score" in text
     assert "percentile" in text
     assert "dataset-local" in text

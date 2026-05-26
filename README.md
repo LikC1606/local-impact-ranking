@@ -201,7 +201,7 @@ Scoring modes:
 - `context_weighted`: `score_v2_context_weighted`; rank weights are multiplied by citation-context support weights when citation contexts are available.
 - `flat`: every valid selected reference receives one point.
 
-Ranking CSV files include `score`, `normalized_score`, and `percentile`. `score` is the raw accumulated dataset-local influence credit, `normalized_score` rescales the table's top score to 100, and `percentile` reports where the item sits within that ranking table.
+Ranking CSV files include `score`, `core_score`, `expanded_score`, `normalized_score`, and `percentile`. `score` is the raw accumulated dataset-local influence credit, `core_score` is the strict top-5 signal, `expanded_score` uses log-discounted top-20 credit to reduce hard cutoff effects, `normalized_score` rescales the table's top score to 100, and `percentile` reports where the item sits within that ranking table.
 
 For the scoring formulas, aggregation rules, audit artifacts, and limitations, see [docs/scoring-method.md](docs/scoring-method.md).
 
