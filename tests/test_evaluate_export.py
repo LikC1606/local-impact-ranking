@@ -102,7 +102,7 @@ def test_render_evaluation_markdown_contains_report_table():
 
 def test_export_rankings_csv_writes_sorted_rankings(tmp_path):
     scores = InfluenceScores(
-        paper_scores={"p2": 1.0, "p1": 2.0},
+        paper_scores={"p2": 1.0, "p1": 2.0, "p3": 0.0},
         author_scores={"Author B": 0.5, "Author A": 3.0},
         institution_scores={"Institution Y": 4.0, "Institution X": 1.0},
         field_scores={"AI": 2.5},
@@ -114,7 +114,22 @@ def test_export_rankings_csv_writes_sorted_rankings(tmp_path):
     with (tmp_path / "papers.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
 
-    assert rows[0] == {"rank": "1", "id": "p1", "score": "2.000000"}
+    assert rows[0] == {
+        "rank": "1",
+        "id": "p1",
+        "score": "2.000000",
+        "normalized_score": "100.000000",
+        "percentile": "100.000000",
+    }
+    assert rows[1] == {
+        "rank": "2",
+        "id": "p2",
+        "score": "1.000000",
+        "normalized_score": "50.000000",
+        "percentile": "66.666667",
+    }
+    assert rows[2]["normalized_score"] == "0.000000"
+    assert rows[2]["percentile"] == "33.333333"
     assert (tmp_path / "authors.csv").exists()
     assert (tmp_path / "institutions.csv").exists()
     assert (tmp_path / "fields.csv").exists()
