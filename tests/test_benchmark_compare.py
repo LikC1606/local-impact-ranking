@@ -4,8 +4,11 @@ import json
 from local_impact_ranking.benchmark_compare import (
     benchmark_comparison_rows,
     compare_gold_target_reports,
+    model_selection_decision,
+    render_model_selection_decision_markdown,
     render_gold_target_comparison_markdown,
     write_gold_target_comparison,
+    write_model_selection_decision,
     render_benchmark_comparison_markdown,
     write_benchmark_comparison,
 )
@@ -309,3 +312,82 @@ def test_render_gold_target_comparison_markdown_handles_empty_report():
 
     assert markdown.startswith("# Gold Target Comparison\n")
     assert "base -> dpo" in markdown
+
+
+def test_model_selection_decision_recommends_test_when_candidate_improves_safely():
+    report = {
+        "summary": {
+            "common_targets": 100,
+            "fixed_count": 8,
+            "broken_count": 2,
+            "net_hit_change": 6,
+            "mean_ndcg_delta": 0.02,
+        }
+    }
+
+    decision = model_selection_decision(report, max_broken_rate=0.05)
+
+    assert decision["recommendation"] == "promote_to_test"
+    assert decision["pass"] is True
+    assert decision["metrics"]["broken_rate"] == 0.02
+    assert "net_hit_change_positive" in decision["passed_checks"]
+
+
+def test_model_selection_decision_blocks_test_when_breakage_is_high():
+    report = {
+        "summary": {
+            "common_targets": 100,
+            "fixed_count": 10,
+            "broken_count": 8,
+            "net_hit_change": 2,
+            "mean_ndcg_delta": 0.01,
+        }
+    }
+
+    decision = model_selection_decision(report, max_broken_rate=0.05)
+
+    assert decision["recommendation"] == "keep_base_or_iterate"
+    assert decision["pass"] is False
+    assert "broken_rate_within_threshold" in decision["failed_checks"]
+
+
+def test_write_model_selection_decision_exports_json_and_markdown(tmp_path):
+    comparison = tmp_path / "comparison"
+    comparison.mkdir()
+    (comparison / "target_comparison.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "common_targets": 50,
+                    "fixed_count": 5,
+                    "broken_count": 1,
+                    "net_hit_change": 4,
+                    "mean_ndcg_delta": 0.03,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    write_model_selection_decision(comparison)
+
+    payload = json.loads((comparison / "model_selection_decision.json").read_text())
+    markdown = (comparison / "model_selection_decision.md").read_text(encoding="utf-8")
+    assert payload["recommendation"] == "promote_to_test"
+    assert "# Model Selection Decision" in markdown
+    assert "| recommendation | promote_to_test |" in markdown
+
+
+def test_render_model_selection_decision_markdown_lists_failed_checks():
+    markdown = render_model_selection_decision_markdown(
+        {
+            "recommendation": "keep_base_or_iterate",
+            "pass": False,
+            "metrics": {"net_hit_change": -1, "broken_rate": 0.1},
+            "passed_checks": [],
+            "failed_checks": ["net_hit_change_positive"],
+        }
+    )
+
+    assert "| failed_checks | net_hit_change_positive |" in markdown
