@@ -1,8 +1,13 @@
 import json
+import math
 
 from local_impact_ranking.judge import parse_judge_output
 from local_impact_ranking.models import Paper
-from local_impact_ranking.scoring import scoring_edges, score_influence
+from local_impact_ranking.scoring import (
+    expanded_rank_weight,
+    scoring_edges,
+    score_influence,
+)
 
 
 def sample_paper():
@@ -74,6 +79,55 @@ def test_flat_credit_mode_assigns_one_point_per_valid_selection():
 
     assert scores.paper_scores["r1"] == 1.0
     assert scores.paper_scores["r2"] == 1.0
+
+
+def test_expanded_rank_weight_uses_log_discount_past_top_five():
+    assert expanded_rank_weight(1) == 1.0
+    assert expanded_rank_weight(5) == 1 / math.log2(6)
+    assert expanded_rank_weight(20) == 1 / math.log2(21)
+    assert expanded_rank_weight(21) == 0.0
+
+
+def test_score_influence_tracks_core_and_expanded_paper_scores():
+    paper = Paper.model_validate(
+        {
+            "paper_id": "target",
+            "title": "Target",
+            "references": [
+                {"reference_id": f"r{i}", "title": f"Reference {i}"}
+                for i in range(1, 7)
+            ],
+        }
+    )
+    result = parse_judge_output(
+        json.dumps(
+            {
+                "target_paper_id": "target",
+                "selected_references": [
+                    {
+                        "reference_id": f"r{i}",
+                        "rank": i,
+                        "confidence": 0.9,
+                        "rationale": "",
+                    }
+                    for i in range(1, 7)
+                ],
+            }
+        ),
+        paper,
+    )
+
+    scores = score_influence([paper], [result], credit_mode="rank_weighted")
+
+    assert scores.paper_scores["r1"] == 1.0
+    assert scores.paper_scores["r5"] == 0.2
+    assert "r6" not in scores.paper_scores
+    assert scores.paper_score_details["r1"]["core_score"] == 1.0
+    assert scores.paper_score_details["r1"]["expanded_score"] == 1.0
+    assert scores.paper_score_details["r5"]["core_score"] == 0.2
+    assert scores.paper_score_details["r5"]["expanded_score"] == 1 / math.log2(6)
+    assert scores.paper_score_details["r6"]["core_score"] == 0.0
+    assert scores.paper_score_details["r6"]["expanded_score"] == 1 / math.log2(7)
 
 
 def test_context_weighted_credit_rewards_context_supported_method_references():
