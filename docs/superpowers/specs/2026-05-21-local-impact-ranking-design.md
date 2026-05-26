@@ -1,0 +1,205 @@
+# Local Impact Ranking Pipeline Design
+
+## Purpose
+
+Build a local, reproducible ImpactRankings-style pipeline that accepts a user-provided paper dataset and produces influence rankings for papers, authors, and institutions. The system should preserve the core idea of ImpactRankings: for each target paper, ask a local language model to identify the most influential references, then assign credit to the referenced papers and their authors/institutions.
+
+The implementation should improve auditability over the public ImpactRankings project by constraining the model to choose only from provided references, logging every decision, and keeping optional metadata enrichment in a local cache.
+
+## Scope
+
+The first version targets datasets around 50,000 papers and assumes the input already contains target paper metadata and at least partial reference metadata. Some references may have incomplete metadata.
+
+In scope:
+
+- Input validation for JSONL and CSV paper datasets.
+- Normalization of papers, references, authors, and institutions.
+- Optional metadata enrichment using OpenAlex, Semantic Scholar, Crossref, and DBLP.
+- Local LLM judging with a replaceable model backend.
+- Strict JSON model outputs.
+- Influence credit assignment and aggregation.
+- CSV/JSONL exports for paper, author, institution, field, and year rankings.
+- Audit logs for model prompts, outputs, parsing, matching, and scoring.
+- Evaluation reports for coverage, invalid selections, parse success, and ranking stability.
+
+Out of scope for the first version:
+
+- Full PDF parsing.
+- Building a web-scale citation database from scratch.
+- Training or fine-tuning a model before the zero-shot pipeline is working.
+- Claiming exact reproduction of the public ImpactRankings outputs.
+
+## Inputs
+
+The preferred input is JSONL with one target paper per line:
+
+```json
+{
+  "paper_id": "local-or-external-id",
+  "title": "Target paper title",
+  "abstract": "Optional abstract",
+  "year": 2024,
+  "venue": "NeurIPS",
+  "field": "Machine Learning",
+  "authors": [
+    {
+      "name": "Author Name",
+      "affiliations": ["Institution Name"],
+      "ids": {"openalex": "optional", "orcid": "optional"}
+    }
+  ],
+  "references": [
+    {
+      "reference_id": "stable-local-reference-id",
+      "title": "Referenced paper title",
+      "authors": [{"name": "Referenced Author", "affiliations": ["Institution"]}],
+      "year": 2020,
+      "venue": "ICML",
+      "doi": "optional",
+      "external_ids": {"openalex": "optional", "semanticscholar": "optional", "dblp": "optional"},
+      "raw_citation": "optional original citation string"
+    }
+  ]
+}
+```
+
+CSV input is supported by mapping columns to the same internal schema. Complex nested fields in CSV should use JSON strings.
+
+## Architecture
+
+The pipeline is organized as small command-line stages with stable intermediate artifacts.
+
+1. `validate`
+   - Reads input JSONL/CSV.
+   - Checks required fields, malformed references, duplicate IDs, and missing metadata.
+   - Produces a validation report.
+
+2. `normalize`
+   - Canonicalizes text, author names, institution names, venues, years, and IDs.
+   - Builds stable internal IDs for papers and references.
+   - Produces normalized paper records.
+
+3. `enrich`
+   - Optional stage.
+   - Looks up incomplete references through OpenAlex, Semantic Scholar, Crossref, and DBLP.
+   - Writes every request and response into a local cache.
+   - Produces enriched records and a coverage report.
+
+4. `judge`
+   - Sends each target paper and its candidate references to a local LLM.
+   - The prompt instructs the model to choose only from the provided references.
+   - The model returns strict JSON with selected reference IDs, ranks, confidence, and short rationales.
+   - Invalid or unparseable outputs are retried with a repair prompt and then logged.
+
+5. `score`
+   - Converts model selections into influence credit.
+   - Assigns credit to selected referenced papers.
+   - Splits credit across referenced paper authors.
+   - Maps author credit to institutions.
+   - Aggregates rankings by paper, author, institution, field, and year.
+
+6. `evaluate`
+   - Reports pipeline health and reliability metrics.
+   - Computes ranking stability across model/prompt/seed variants when multiple judge runs exist.
+   - Exports an audit sample for human review.
+
+7. `export`
+   - Writes CSV/JSONL outputs and summary reports.
+   - Optionally creates static frontend-compatible CSV files.
+
+## Model Strategy
+
+The system uses a pluggable local model backend. For the available 8x H100 environment, the recommended primary model is a strong open-weight local judge such as GLM-4.5-Air or Qwen3-235B-A22B-Instruct FP8. A smaller model such as DeepSeek-R1-Distill-Qwen-32B should be used as a baseline and ablation model.
+
+The first version should use zero-shot prompting before any fine-tuning. Fine-tuning becomes useful only after the project has either human labels or high-quality pseudo-labels generated by a stronger judge and reviewed by sampling.
+
+The model output schema:
+
+```json
+{
+  "target_paper_id": "paper-id",
+  "selected_references": [
+    {
+      "reference_id": "ref-id",
+      "rank": 1,
+      "confidence": 0.87,
+      "rationale": "Brief reason grounded in the target paper and reference list."
+    }
+  ]
+}
+```
+
+The parser rejects references that are not in the candidate list. Invalid selections are counted and excluded unless a repair pass maps them to a valid candidate.
+
+## Scoring
+
+The default credit rule is rank-weighted top-k credit:
+
+- Rank 1: 1.00
+- Rank 2: 0.80
+- Rank 3: 0.60
+- Rank 4: 0.40
+- Rank 5: 0.20
+
+The scoring module should also support flat credit for ablations, where each selected reference receives 1 point.
+
+For a selected referenced paper:
+
+1. Add paper credit to the referenced paper.
+2. Split the credit evenly across its authors.
+3. Split each author's credit across known affiliations when multiple affiliations are present.
+4. Aggregate institution totals.
+
+The scorer must preserve both raw and transformed scores. Log transforms and field normalization should be optional post-processing steps, not hidden inside the base credit calculation.
+
+## Reproducibility
+
+Every run writes a manifest containing:
+
+- Input dataset checksum.
+- Configuration file.
+- Model name, revision, quantization, serving backend, and inference parameters.
+- Prompt template version.
+- Enrichment provider versions or response timestamps.
+- Code version when run inside a git repository.
+- Random seeds when sampling is enabled.
+
+Every model call writes an audit record with the prompt hash, candidate reference IDs, raw output, parsed output, retry count, and validation status.
+
+## Evaluation
+
+The first version should report:
+
+- Input coverage: papers, references, authors, institutions.
+- Enrichment coverage before and after lookup.
+- LLM parse success rate.
+- Invalid selection rate.
+- Empty selection rate.
+- Average selected references per paper.
+- Institution and author ranking sensitivity across scoring modes.
+- Ranking correlation between LLM influence, citation count baseline, and PageRank baseline when citation graph data is available.
+- Human audit sample exports for manual review.
+
+## Outputs
+
+Primary outputs:
+
+- `rankings/papers.csv`
+- `rankings/authors.csv`
+- `rankings/institutions.csv`
+- `rankings/fields.csv`
+- `rankings/years.csv`
+- `audit/judge_outputs.jsonl`
+- `audit/matching.jsonl`
+- `reports/validation.md`
+- `reports/evaluation.md`
+- `run_manifest.json`
+
+Frontend-compatible outputs can be generated later using the same institution and faculty ranking CSV shape as the public ImpactRankings project.
+
+## Implementation Notes
+
+The implementation should be Python-first, with typed dataclasses or Pydantic models for schema validation. The CLI should be stage-oriented so large runs can resume from intermediate artifacts. The model backend should support OpenAI-compatible local servers, vLLM, and SGLang-style endpoints through a common adapter.
+
+The first implementation should prioritize correctness, resumability, and audit logs over a polished dashboard.
+

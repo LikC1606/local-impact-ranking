@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Local datasets, model weights, and generated experiment outputs.
+data/
+models/
+runs/

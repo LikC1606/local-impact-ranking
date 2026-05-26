@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Any
+
+from local_impact_ranking.judge import JudgeResult
+from local_impact_ranking.models import Paper
+from local_impact_ranking.scoring import InfluenceScores
+
+
+def export_rankings_csv(scores: InfluenceScores, output_dir: str | Path) -> None:
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    _write_score_table(destination / "papers.csv", scores.paper_scores)
+    _write_score_table(destination / "authors.csv", scores.author_scores)
+    _write_score_table(destination / "institutions.csv", scores.institution_scores)
+    _write_score_table(destination / "fields.csv", scores.field_scores)
+    _write_score_table(destination / "years.csv", scores.year_scores)
+
+
+def export_scoring_edges_csv(
+    rows: list[dict[str, Any]],
+    path: str | Path,
+) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "target_paper_id",
+        "reference_id",
+        "rank",
+        "rank_weight",
+        "context_count",
+        "context_weight",
+        "credit",
+    ]
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "target_paper_id": row["target_paper_id"],
+                    "reference_id": row["reference_id"],
+                    "rank": row["rank"],
+                    "rank_weight": f"{row['rank_weight']:.6f}",
+                    "context_count": row["context_count"],
+                    "context_weight": f"{row['context_weight']:.6f}",
+                    "credit": f"{row['credit']:.6f}",
+                }
+            )
+
+
+def _write_score_table(path: Path, scores: dict[str, float]) -> None:
+    rows = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["rank", "id", "score"])
+        writer.writeheader()
+        for rank, (identifier, score) in enumerate(rows, start=1):
+            writer.writerow({"rank": rank, "id": identifier, "score": f"{score:.6f}"})
+
+
+def export_human_audit_sample(
+    papers: list[Paper],
+    judge_results: list[JudgeResult],
+    path: str | Path,
+) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    papers_by_id = {paper.paper_id: paper for paper in papers}
+    results_by_id = {result.target_paper_id: result for result in judge_results}
+    fieldnames = [
+        "target_paper_id",
+        "target_title",
+        "reference_id",
+        "reference_title",
+        "reference_year",
+        "reference_venue",
+        "rank",
+        "confidence",
+        "valid",
+        "rationale",
+        "human_importance_label",
+        "human_notes",
+    ]
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for paper in papers:
+            result = results_by_id.get(paper.paper_id)
+            if result is None:
+                continue
+            references_by_id = {
+                reference.reference_id: reference for reference in paper.references
+            }
+            for selection in sorted(result.selected_references, key=lambda item: item.rank):
+                reference = references_by_id.get(selection.reference_id)
+                writer.writerow(
+                    {
+                        "target_paper_id": paper.paper_id,
+                        "target_title": paper.title,
+                        "reference_id": selection.reference_id,
+                        "reference_title": reference.title if reference else "",
+                        "reference_year": reference.year if reference and reference.year else "",
+                        "reference_venue": reference.venue if reference and reference.venue else "",
+                        "rank": selection.rank,
+                        "confidence": f"{selection.confidence:.6f}",
+                        "valid": selection.valid,
+                        "rationale": selection.rationale,
+                        "human_importance_label": "",
+                        "human_notes": "",
+                    }
+                )
