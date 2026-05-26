@@ -62,6 +62,24 @@ def test_run_local_smoke_script_runs_heuristic_examples_and_checks_context_weigh
     assert 'grep -q "1,r1,1.500000" "${OUTPUT}/context/rankings/papers.csv"' in script
 
 
+def test_compare_model_judges_script_runs_base_candidate_and_reports_deltas():
+    script = Path("scripts/compare_model_judges.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${1:?Usage:' in script
+    assert 'OUTPUT="${2:-runs/model-comparison}"' in script
+    assert 'BASE_MODEL="${BASE_MODEL:-local-impact-judge}"' in script
+    assert 'CANDIDATE_MODEL="${CANDIDATE_MODEL:-local-impact-judge-candidate}"' in script
+    assert 'BASE_AUDIT_PATH="${OUTPUT}/base/audit/judge_outputs.jsonl"' in script
+    assert 'CANDIDATE_AUDIT_PATH="${OUTPUT}/candidate/audit/judge_outputs.jsonl"' in script
+    assert '--model "${BASE_MODEL}"' in script
+    assert '--model "${CANDIDATE_MODEL}"' in script
+    assert 'compare-benchmarks' in script
+    assert 'compare-gold-targets' in script
+    assert 'test -s "${OUTPUT}/comparison/benchmark_comparison.md"' in script
+    assert 'test -s "${OUTPUT}/comparison/target_comparison.json"' in script
+    assert 'test -s "${OUTPUT}/comparison/target_changes.csv"' in script
+
+
 def test_run_benchmark_smoke_script_runs_limited_scicite_pipeline():
     script = Path("scripts/run_benchmark_smoke.sh").read_text(encoding="utf-8")
 

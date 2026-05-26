@@ -91,6 +91,17 @@ PYTHONPATH=src python -m local_impact_ranking.cli train-dpo \
 
 After training, serve the adapter or merged model separately and compare it against the base judge on `dev.papers.jsonl`. Only use `test.papers.jsonl` for the final reported comparison.
 
+```bash
+BASE_MODEL=local-impact-judge \
+CANDIDATE_MODEL=local-impact-judge-candidate \
+LIMIT=150 TOP_K=5 \
+  scripts/compare_model_judges.sh \
+  data/my-dataset/splits/dev.papers.jsonl \
+  runs/my-dataset-dev-comparison
+```
+
+The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, and `target_changes.csv`. Treat the fine-tuned model as better only if dev metrics improve without a large `broken_count`, then run the same command on `test.papers.jsonl` once for the final report.
+
 ## Public Benchmarks
 
 When you do not have a private dataset yet, list candidate public benchmarks and their pipeline mappings:
