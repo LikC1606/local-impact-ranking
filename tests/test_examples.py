@@ -34,6 +34,8 @@ def test_context_example_demonstrates_context_weighted_score(tmp_path):
             "rank": "1",
             "id": "r1",
             "score": "1.500000",
+            "core_score": "1.000000",
+            "expanded_score": "1.500000",
             "normalized_score": "100.000000",
             "percentile": "100.000000",
         }
