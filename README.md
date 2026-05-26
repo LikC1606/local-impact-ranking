@@ -2,6 +2,18 @@
 
 Local, auditable ImpactRankings-style pipeline for ranking papers, authors, and institutions from a paper dataset with references.
 
+## Repository Scope
+
+This repository contains the source code, tests, examples, scripts, and planning documents needed to reproduce the local impact-ranking pipeline.
+
+It intentionally does not include local datasets, downloaded model weights, or generated experiment outputs. Those paths are ignored by git:
+
+- `data/`
+- `models/`
+- `runs/`
+
+The core package and CI test suite do not require GPU libraries. Local LLM serving and DPO LoRA training require a separate machine environment with model weights and training dependencies such as `torch`, `transformers`, `peft`, and `vllm`.
+
 ## Install
 
 ```bash
