@@ -75,9 +75,11 @@ def test_compare_model_judges_script_runs_base_candidate_and_reports_deltas():
     assert '--model "${CANDIDATE_MODEL}"' in script
     assert 'compare-benchmarks' in script
     assert 'compare-gold-targets' in script
+    assert 'model-selection-decision' in script
     assert 'test -s "${OUTPUT}/comparison/benchmark_comparison.md"' in script
     assert 'test -s "${OUTPUT}/comparison/target_comparison.json"' in script
     assert 'test -s "${OUTPUT}/comparison/target_changes.csv"' in script
+    assert 'test -s "${OUTPUT}/comparison/model_selection_decision.md"' in script
 
 
 def test_run_benchmark_smoke_script_runs_limited_scicite_pipeline():
