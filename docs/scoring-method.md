@@ -104,6 +104,23 @@ Author B receives 0.5
 
 If an author has two affiliations, that author's share is split across both affiliations.
 
+## Ranking Score Columns
+
+Each ranking CSV writes three score fields:
+
+- `score`: raw accumulated dataset-local credit. This is the auditable influence score used for sorting.
+- `normalized_score`: 0-100 score relative to the highest raw score in the same ranking table.
+- `percentile`: rank percentile within the same table. `100.000000` means top ranked in that table.
+
+Formula:
+
+```text
+normalized_score = score / max(score in table) * 100
+percentile = (N - rank + 1) / N * 100
+```
+
+`normalized_score` and `percentile` are reporting conveniences. They do not change the ranking and should not be compared across unrelated datasets unless the datasets have the same scope and coverage.
+
 ## Audit Artifacts
 
 Every run writes the scoring details needed to reproduce the ranking:

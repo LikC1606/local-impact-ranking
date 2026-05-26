@@ -53,11 +53,32 @@ def export_scoring_edges_csv(
 
 def _write_score_table(path: Path, scores: dict[str, float]) -> None:
     rows = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    max_score = rows[0][1] if rows else 0.0
+    total = len(rows)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["rank", "id", "score"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "rank",
+                "id",
+                "score",
+                "normalized_score",
+                "percentile",
+            ],
+        )
         writer.writeheader()
         for rank, (identifier, score) in enumerate(rows, start=1):
-            writer.writerow({"rank": rank, "id": identifier, "score": f"{score:.6f}"})
+            normalized_score = (score / max_score * 100.0) if max_score > 0 else 0.0
+            percentile = ((total - rank + 1) / total * 100.0) if total else 0.0
+            writer.writerow(
+                {
+                    "rank": rank,
+                    "id": identifier,
+                    "score": f"{score:.6f}",
+                    "normalized_score": f"{normalized_score:.6f}",
+                    "percentile": f"{percentile:.6f}",
+                }
+            )
 
 
 def export_human_audit_sample(
