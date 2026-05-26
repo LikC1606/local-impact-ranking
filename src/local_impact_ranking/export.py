@@ -12,7 +12,11 @@ from local_impact_ranking.scoring import InfluenceScores
 def export_rankings_csv(scores: InfluenceScores, output_dir: str | Path) -> None:
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
-    _write_score_table(destination / "papers.csv", scores.paper_scores)
+    _write_score_table(
+        destination / "papers.csv",
+        scores.paper_scores,
+        score_details=scores.paper_score_details,
+    )
     _write_score_table(destination / "authors.csv", scores.author_scores)
     _write_score_table(destination / "institutions.csv", scores.institution_scores)
     _write_score_table(destination / "fields.csv", scores.field_scores)
@@ -51,10 +55,16 @@ def export_scoring_edges_csv(
             )
 
 
-def _write_score_table(path: Path, scores: dict[str, float]) -> None:
-    rows = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+def _write_score_table(
+    path: Path,
+    scores: dict[str, float],
+    *,
+    score_details: dict[str, dict[str, float]] | None = None,
+) -> None:
+    rows = _score_rows(scores, score_details)
     max_score = rows[0][1] if rows else 0.0
     total = len(rows)
+    detail_fields = ["core_score", "expanded_score"] if score_details is not None else []
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -62,6 +72,7 @@ def _write_score_table(path: Path, scores: dict[str, float]) -> None:
                 "rank",
                 "id",
                 "score",
+                *detail_fields,
                 "normalized_score",
                 "percentile",
             ],
@@ -75,10 +86,37 @@ def _write_score_table(path: Path, scores: dict[str, float]) -> None:
                     "rank": rank,
                     "id": identifier,
                     "score": f"{score:.6f}",
+                    **_score_detail_row(identifier, score_details),
                     "normalized_score": f"{normalized_score:.6f}",
                     "percentile": f"{percentile:.6f}",
                 }
             )
+
+
+def _score_rows(
+    scores: dict[str, float],
+    score_details: dict[str, dict[str, float]] | None,
+) -> list[tuple[str, float]]:
+    identifiers = set(scores)
+    if score_details is not None:
+        identifiers.update(score_details)
+    return sorted(
+        ((identifier, scores.get(identifier, 0.0)) for identifier in identifiers),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
+def _score_detail_row(
+    identifier: str,
+    score_details: dict[str, dict[str, float]] | None,
+) -> dict[str, str]:
+    if score_details is None:
+        return {}
+    details = score_details.get(identifier, {})
+    return {
+        "core_score": f"{details.get('core_score', 0.0):.6f}",
+        "expanded_score": f"{details.get('expanded_score', 0.0):.6f}",
+    }
 
 
 def export_human_audit_sample(
