@@ -1,7 +1,9 @@
 import json
 from types import SimpleNamespace
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 from local_impact_ranking.dpo_lora_train import (
     dpo_loss,
