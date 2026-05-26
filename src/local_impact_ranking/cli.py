@@ -18,6 +18,7 @@ from local_impact_ranking.artifacts import RUN_ARTIFACTS, artifact_index
 from local_impact_ranking.benchmark_compare import (
     write_benchmark_comparison,
     write_gold_target_comparison,
+    write_model_selection_decision,
 )
 from local_impact_ranking.benchmark_status import (
     benchmark_status_report,
@@ -205,6 +206,20 @@ def compare_gold_targets(
 ) -> None:
     write_gold_target_comparison(base_run_dir, candidate_run_dir, output)
     typer.echo(f"Wrote gold target comparison to {output}")
+
+
+@app.command("model-selection-decision")
+def model_selection_decision_command(
+    comparison_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    max_broken_rate: float = typer.Option(0.05, "--max-broken-rate"),
+    min_ndcg_delta: float = typer.Option(0.0, "--min-ndcg-delta"),
+) -> None:
+    write_model_selection_decision(
+        comparison_dir,
+        max_broken_rate=max_broken_rate,
+        min_ndcg_delta=min_ndcg_delta,
+    )
+    typer.echo(f"Wrote model selection decision to {comparison_dir}")
 
 
 @app.command("benchmark-status")

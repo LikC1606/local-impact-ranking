@@ -100,7 +100,7 @@ LIMIT=150 TOP_K=5 \
   runs/my-dataset-dev-comparison
 ```
 
-The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, and `target_changes.csv`. Treat the fine-tuned model as better only if dev metrics improve without a large `broken_count`, then run the same command on `test.papers.jsonl` once for the final report.
+The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, `target_changes.csv`, `model_selection_decision.json`, and `model_selection_decision.md`. The default decision rule recommends moving to test only when dev has common labeled targets, positive `net_hit_change`, non-negative `mean_ndcg_delta`, and `broken_count / common_targets <= 0.05`. Run the same command on `test.papers.jsonl` once for the final report only after dev says `promote_to_test`.
 
 ## Public Benchmarks
 
