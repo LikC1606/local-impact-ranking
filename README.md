@@ -216,6 +216,8 @@ Outputs:
 
 `gold_evaluation.json` and `gold_evaluation.md` report hit rate, precision, recall, MRR, and NDCG when benchmark gold labels are available, such as PreScience `prescience_positive_reference_ids`.
 
+For evaluation metric definitions, error analysis, benchmark comparison, and target-level comparison, see [docs/evaluation-method.md](docs/evaluation-method.md).
+
 `audit/judge_outputs.jsonl` stores each judge result with `prompt_sha256` and the candidate `reference_id` list, so model outputs can be traced back to the prompt and candidate set used for that paper.
 
 `audit/prompts.jsonl` stores the exact prompt sent for each target paper, its `prompt_sha256`, and the candidate `reference_id` list. This makes prompt construction auditable even when judge results are replayed from an existing audit file.

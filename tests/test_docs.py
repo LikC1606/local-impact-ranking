@@ -35,3 +35,25 @@ def test_readme_links_to_scoring_method_doc():
     text = Path("README.md").read_text(encoding="utf-8")
 
     assert "[docs/scoring-method.md](docs/scoring-method.md)" in text
+
+
+def test_evaluation_method_doc_covers_metrics_and_limits():
+    text = Path("docs/evaluation-method.md").read_text(encoding="utf-8")
+
+    assert "parse_success_rate" in text
+    assert "invalid_selection_rate" in text
+    assert "hit_rate" in text
+    assert "selection_precision" in text
+    assert "selection_recall" in text
+    assert "mean_reciprocal_rank" in text
+    assert "mean_ndcg" in text
+    assert "gold_candidate_recall" in text
+    assert "fixed_count" in text
+    assert "broken_count" in text
+    assert "not global scientific impact" in text
+
+
+def test_readme_links_to_evaluation_method_doc():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "[docs/evaluation-method.md](docs/evaluation-method.md)" in text
