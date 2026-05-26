@@ -180,6 +180,39 @@ def test_cli_split_writes_train_dev_test_files_and_manifest(tmp_path):
     assert manifest["splits"]["test"]["paper_ids"] == ["p5"]
 
 
+def test_cli_model_selection_decision_writes_decision_files(tmp_path):
+    comparison_dir = tmp_path / "comparison"
+    comparison_dir.mkdir()
+    (comparison_dir / "target_comparison.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "common_targets": 20,
+                    "fixed_count": 3,
+                    "broken_count": 0,
+                    "net_hit_change": 3,
+                    "mean_ndcg_delta": 0.02,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["model-selection-decision", str(comparison_dir)],
+    )
+
+    assert result.exit_code == 0
+    decision = json.loads(
+        (comparison_dir / "model_selection_decision.json").read_text(encoding="utf-8")
+    )
+    markdown = (comparison_dir / "model_selection_decision.md").read_text(encoding="utf-8")
+    assert decision["recommendation"] == "promote_to_test"
+    assert "# Model Selection Decision" in markdown
+
+
 def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_dir = tmp_path / "run"
