@@ -106,20 +106,24 @@ If an author has two affiliations, that author's share is split across both affi
 
 ## Ranking Score Columns
 
-Each ranking CSV writes three score fields:
+Each ranking CSV writes report-ready score fields:
 
 - `score`: raw accumulated dataset-local credit. This is the auditable influence score used for sorting.
+- `core_score`: top-5 rank-weighted influence. This is the strict ImpactRankings-compatible core signal.
+- `expanded_score`: top-20 log-discounted influence. This keeps lower-ranked but still plausible influences instead of hard-cutting after rank 5.
 - `normalized_score`: 0-100 score relative to the highest raw score in the same ranking table.
 - `percentile`: rank percentile within the same table. `100.000000` means top ranked in that table.
 
 Formula:
 
 ```text
+core_score uses rank 1-5 weights: 1.0, 0.8, 0.6, 0.4, 0.2
+expanded_score uses expanded_weight(rank) = 1 / log2(rank + 1), for rank <= 20
 normalized_score = score / max(score in table) * 100
 percentile = (N - rank + 1) / N * 100
 ```
 
-`normalized_score` and `percentile` are reporting conveniences. They do not change the ranking and should not be compared across unrelated datasets unless the datasets have the same scope and coverage.
+`core_score` is intentionally sparse and high precision. `expanded_score` is less strict and better for seeing medium-strength influence. `normalized_score` and `percentile` are reporting conveniences. They do not change the ranking and should not be compared across unrelated datasets unless the datasets have the same scope and coverage.
 
 ## Audit Artifacts
 
