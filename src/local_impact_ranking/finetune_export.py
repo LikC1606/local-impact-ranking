@@ -13,10 +13,13 @@ def make_format_sft_records(
     judge_results: list[JudgeResult],
     *,
     top_k: int,
+    target_paper_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     papers_by_id = {paper.paper_id: paper for paper in papers}
     records = []
     for result in judge_results:
+        if not _target_is_in_scope(result.target_paper_id, target_paper_ids):
+            continue
         paper = papers_by_id.get(result.target_paper_id)
         if paper is None or result.error is not None or result.parse_error is not None:
             continue
@@ -31,11 +34,14 @@ def make_proxy_positive_sft_records(
     proxy_report: dict[str, Any],
     *,
     top_k: int,
+    target_paper_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     papers_by_id = {paper.paper_id: paper for paper in papers}
     supported_ids = _supported_selection_ids(proxy_report)
     records = []
     for result in judge_results:
+        if not _target_is_in_scope(result.target_paper_id, target_paper_ids):
+            continue
         paper = papers_by_id.get(result.target_paper_id)
         if paper is None or result.error is not None or result.parse_error is not None:
             continue
@@ -54,6 +60,8 @@ def make_pairwise_preference_records(
     papers: list[Paper],
     judge_results: list[JudgeResult],
     proxy_report: dict[str, Any],
+    *,
+    target_paper_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     papers_by_id = {paper.paper_id: paper for paper in papers}
     evidence_by_pair = {
@@ -62,6 +70,8 @@ def make_pairwise_preference_records(
     }
     records: list[dict[str, Any]] = []
     for result in judge_results:
+        if not _target_is_in_scope(result.target_paper_id, target_paper_ids):
+            continue
         paper = papers_by_id.get(result.target_paper_id)
         if paper is None:
             continue
@@ -101,12 +111,18 @@ def export_finetuning_datasets(
     *,
     top_k: int,
     gold_report: dict[str, Any] | None = None,
+    target_paper_ids: set[str] | None = None,
 ) -> None:
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     _write_jsonl(
         destination / "format_sft.jsonl",
-        make_format_sft_records(papers, judge_results, top_k=top_k),
+        make_format_sft_records(
+            papers,
+            judge_results,
+            top_k=top_k,
+            target_paper_ids=target_paper_ids,
+        ),
     )
     _write_jsonl(
         destination / "proxy_positive_sft.jsonl",
@@ -115,15 +131,26 @@ def export_finetuning_datasets(
             judge_results,
             proxy_report,
             top_k=top_k,
+            target_paper_ids=target_paper_ids,
         ),
     )
     _write_jsonl(
         destination / "pairwise_preferences.jsonl",
-        make_pairwise_preference_records(papers, judge_results, proxy_report),
+        make_pairwise_preference_records(
+            papers,
+            judge_results,
+            proxy_report,
+            target_paper_ids=target_paper_ids,
+        ),
     )
     _write_jsonl(
         destination / "dpo_preferences.jsonl",
-        make_dpo_preference_records(papers, judge_results, proxy_report),
+        make_dpo_preference_records(
+            papers,
+            judge_results,
+            proxy_report,
+            target_paper_ids=target_paper_ids,
+        ),
     )
     _write_jsonl(
         destination / "gold_hard_negative_dpo.jsonl",
@@ -131,6 +158,7 @@ def export_finetuning_datasets(
             papers,
             judge_results,
             gold_report or {},
+            target_paper_ids=target_paper_ids,
         ),
     )
 
@@ -139,9 +167,16 @@ def make_dpo_preference_records(
     papers: list[Paper],
     judge_results: list[JudgeResult],
     proxy_report: dict[str, Any],
+    *,
+    target_paper_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     records = []
-    for record in make_pairwise_preference_records(papers, judge_results, proxy_report):
+    for record in make_pairwise_preference_records(
+        papers,
+        judge_results,
+        proxy_report,
+        target_paper_ids=target_paper_ids,
+    ):
         records.append(
             {
                 "conversations": [
@@ -171,6 +206,8 @@ def make_gold_hard_negative_dpo_records(
     papers: list[Paper],
     judge_results: list[JudgeResult],
     gold_report: dict[str, Any],
+    *,
+    target_paper_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     papers_by_id = {paper.paper_id: paper for paper in papers}
     results_by_id = {result.target_paper_id: result for result in judge_results}
@@ -179,6 +216,8 @@ def make_gold_hard_negative_dpo_records(
         if row.get("hit"):
             continue
         target_id = str(row.get("target_paper_id"))
+        if not _target_is_in_scope(target_id, target_paper_ids):
+            continue
         paper = papers_by_id.get(target_id)
         result = results_by_id.get(target_id)
         if paper is None or result is None:
@@ -261,6 +300,13 @@ def _supported_selection_ids(proxy_report: dict[str, Any]) -> set[tuple[str, str
         for row in proxy_report.get("selected_reference_evidence", [])
         if _is_supported(row)
     }
+
+
+def _target_is_in_scope(
+    target_paper_id: str,
+    target_paper_ids: set[str] | None,
+) -> bool:
+    return target_paper_ids is None or target_paper_id in target_paper_ids
 
 
 def _is_supported(evidence_row: dict[str, Any]) -> bool:

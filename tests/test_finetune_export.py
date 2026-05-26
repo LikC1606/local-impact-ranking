@@ -44,6 +44,27 @@ def sample_papers():
     ]
 
 
+def sample_extra_target_paper():
+    return Paper.model_validate(
+        {
+            "paper_id": "p4",
+            "title": "Second Target",
+            "abstract": "Second abstract",
+            "references": [
+                {"reference_id": "p5", "title": "Second Supported Reference"},
+                {"reference_id": "p6", "title": "Second Unsupported Reference"},
+            ],
+            "citation_contexts": [
+                {
+                    "reference_id": "p5",
+                    "sentence": "We build on Second Supported Reference for the method.",
+                    "section": "Method",
+                }
+            ],
+        }
+    )
+
+
 def sample_result(paper):
     return parse_judge_output(
         json.dumps(
@@ -70,6 +91,31 @@ def proxy_report(papers, result):
         [result],
         compute_bibliometric_baselines(papers),
         top_n=1,
+    )
+
+
+def extra_result(paper):
+    return parse_judge_output(
+        json.dumps(
+            {
+                "target_paper_id": "p4",
+                "selected_references": [
+                    {
+                        "reference_id": "p5",
+                        "rank": 1,
+                        "confidence": 0.9,
+                        "rationale": "supported",
+                    },
+                    {
+                        "reference_id": "p6",
+                        "rank": 2,
+                        "confidence": 0.8,
+                        "rationale": "unsupported",
+                    },
+                ],
+            }
+        ),
+        paper,
     )
 
 
@@ -187,3 +233,40 @@ def test_export_finetuning_datasets_writes_jsonl_files(tmp_path):
         (tmp_path / "gold_hard_negative_dpo.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
     assert hard_negative["chosen_reference_id"] == "p2"
+
+
+def test_export_finetuning_datasets_can_filter_target_paper_ids(tmp_path):
+    papers = sample_papers() + [sample_extra_target_paper()]
+    result = sample_result(papers[0])
+    extra = extra_result(papers[-1])
+    proxy = proxy_report(papers, result)
+    proxy_extra = evaluate_proxy_quality(
+        papers,
+        [result, extra],
+        compute_bibliometric_baselines(papers),
+        top_n=1,
+    )
+
+    export_finetuning_datasets(
+        papers,
+        [result, extra],
+        proxy_extra,
+        tmp_path,
+        top_k=2,
+        target_paper_ids={"p1"},
+    )
+
+    format_records = [
+        json.loads(line)
+        for line in (tmp_path / "format_sft.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    dpo_records = [
+        json.loads(line)
+        for line in (tmp_path / "dpo_preferences.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert [record["target_paper_id"] for record in format_records] == ["p1"]
+    assert [record["target_paper_id"] for record in dpo_records] == ["p1"]
+    assert not (tmp_path / "finetuning_manifest.json").exists()

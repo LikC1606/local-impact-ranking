@@ -46,6 +46,7 @@ from local_impact_ranking.export import (
     export_scoring_edges_csv,
 )
 from local_impact_ranking.finetune_export import export_finetuning_datasets
+from local_impact_ranking.dpo_lora_train import run_dpo_lora_training
 from local_impact_ranking.gold_evaluation import (
     evaluate_gold_reference_selection,
     render_gold_evaluation_markdown,
@@ -140,6 +141,51 @@ def split_dataset(
         f"dev={manifest['splits']['dev']['count']}, "
         f"test={manifest['splits']['test']['count']})"
     )
+
+
+@app.command("train-dpo")
+def train_dpo(
+    model: str = typer.Option(..., "--model"),
+    train_file: list[Path] = typer.Option(
+        ...,
+        "--train-file",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_steps: int = typer.Option(20, "--max-steps", min=1),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+    max_length: int = typer.Option(1536, "--max-length", min=1),
+    beta: float = typer.Option(0.1, "--beta"),
+    learning_rate: float = typer.Option(1e-6, "--learning-rate"),
+    seed: int = typer.Option(13, "--seed"),
+    gradient_accumulation_steps: int = typer.Option(
+        8,
+        "--gradient-accumulation-steps",
+        min=1,
+    ),
+    lora_r: int = typer.Option(16, "--lora-r", min=1),
+    lora_alpha: int = typer.Option(32, "--lora-alpha", min=1),
+    lora_dropout: float = typer.Option(0.05, "--lora-dropout", min=0.0),
+    device_map: str = typer.Option("auto", "--device-map"),
+) -> None:
+    run_dpo_lora_training(
+        model_name_or_path=model,
+        train_files=train_file,
+        output_dir=output,
+        max_steps=max_steps,
+        max_examples=max_examples,
+        max_length=max_length,
+        beta=beta,
+        learning_rate=learning_rate,
+        seed=seed,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        device_map=device_map,
+    )
+    typer.echo(f"Wrote DPO adapter to {output}")
 
 
 @app.command("compare-benchmarks")

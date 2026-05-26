@@ -71,6 +71,26 @@ PYTHONPATH=src python -m local_impact_ranking.cli split \
 
 This writes `train.papers.jsonl`, `dev.papers.jsonl`, `test.papers.jsonl`, and `split_manifest.json`. The split is an ordered prefix split by explicit counts, so it is deterministic and auditable. Use train only for SFT/DPO data generation, dev for prompt/model selection, and test only for the final reported metrics.
 
+Minimal model-improvement loop:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli run \
+  --input data/my-dataset/splits/train.papers.jsonl \
+  --output runs/my-dataset-train \
+  --top-k 5 \
+  --judge openai-compatible \
+  --base-url http://localhost:8000/v1 \
+  --model local-impact-judge
+
+PYTHONPATH=src python -m local_impact_ranking.cli train-dpo \
+  --model models/deepseek-r1-distill-qwen-32b \
+  --train-file runs/my-dataset-train/finetuning/dpo_preferences.jsonl \
+  --train-file runs/my-dataset-train/finetuning/gold_hard_negative_dpo.jsonl \
+  --output runs/my-dataset-train/checkpoints/dpo
+```
+
+After training, serve the adapter or merged model separately and compare it against the base judge on `dev.papers.jsonl`. Only use `test.papers.jsonl` for the final reported comparison.
+
 ## Public Benchmarks
 
 When you do not have a private dataset yet, list candidate public benchmarks and their pipeline mappings:

@@ -71,6 +71,70 @@ def test_cli_convert_csv_writes_jsonl_that_validate_can_read(tmp_path):
     assert json.loads(output_path.read_text())["paper_id"] == "p1"
 
 
+def test_cli_train_dpo_delegates_to_lora_trainer(monkeypatch, tmp_path):
+    train_file_one = tmp_path / "train-one.jsonl"
+    train_file_two = tmp_path / "train-two.jsonl"
+    train_file_one.write_text("{}\n", encoding="utf-8")
+    train_file_two.write_text("{}\n", encoding="utf-8")
+    output_dir = tmp_path / "adapter"
+    captured = {}
+
+    def fake_run_dpo_lora_training(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "run_dpo_lora_training", fake_run_dpo_lora_training)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-dpo",
+            "--model",
+            "/models/base",
+            "--train-file",
+            str(train_file_one),
+            "--train-file",
+            str(train_file_two),
+            "--output",
+            str(output_dir),
+            "--max-steps",
+            "3",
+            "--max-examples",
+            "2",
+            "--beta",
+            "0.2",
+            "--learning-rate",
+            "2e-6",
+            "--seed",
+            "42",
+            "--gradient-accumulation-steps",
+            "4",
+            "--lora-r",
+            "8",
+            "--lora-alpha",
+            "16",
+            "--lora-dropout",
+            "0.1",
+            "--device-map",
+            "cpu",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["model_name_or_path"] == "/models/base"
+    assert captured["train_files"] == [train_file_one, train_file_two]
+    assert captured["output_dir"] == output_dir
+    assert captured["max_steps"] == 3
+    assert captured["max_examples"] == 2
+    assert captured["beta"] == 0.2
+    assert captured["learning_rate"] == 2e-6
+    assert captured["seed"] == 42
+    assert captured["gradient_accumulation_steps"] == 4
+    assert captured["lora_r"] == 8
+    assert captured["lora_alpha"] == 16
+    assert captured["lora_dropout"] == 0.1
+    assert captured["device_map"] == "cpu"
+
+
 def test_cli_split_writes_train_dev_test_files_and_manifest(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_dir = tmp_path / "splits"
