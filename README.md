@@ -58,6 +58,19 @@ PYTHONPATH=src python -m local_impact_ranking.cli validate \
 
 This writes `validation.json` and `validation.md`, flagging duplicate paper IDs, empty reference lists, duplicate reference IDs within a paper, missing titles, and out-of-range years.
 
+Before model improvement or benchmark reporting, cut a held-out split:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli split \
+  --input papers.jsonl \
+  --output data/my-dataset/splits \
+  --train-count 700 \
+  --dev-count 150 \
+  --test-count 150
+```
+
+This writes `train.papers.jsonl`, `dev.papers.jsonl`, `test.papers.jsonl`, and `split_manifest.json`. The split is an ordered prefix split by explicit counts, so it is deterministic and auditable. Use train only for SFT/DPO data generation, dev for prompt/model selection, and test only for the final reported metrics.
+
 ## Public Benchmarks
 
 When you do not have a private dataset yet, list candidate public benchmarks and their pipeline mappings:

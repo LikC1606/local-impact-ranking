@@ -60,12 +60,13 @@ from local_impact_ranking.judge import (
     with_judge_audit_metadata,
 )
 from local_impact_ranking.llamafactory_export import export_llamafactory_configs
-from local_impact_ranking.manifest import build_run_manifest
+from local_impact_ranking.manifest import build_run_manifest, sha256_file
 from local_impact_ranking.normalize import normalize_paper
 from local_impact_ranking.proxy_evaluation import evaluate_proxy_quality
 from local_impact_ranking.scoring import scoring_edges, score_influence, scoring_config
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
 from local_impact_ranking.prescience_adapter import convert_prescience_file
+from local_impact_ranking.splits import write_paper_splits
 from local_impact_ranking.stability import stability_report
 from local_impact_ranking.summary import (
     benchmark_summary_report,
@@ -110,6 +111,35 @@ def convert_csv(
 ) -> None:
     count = convert_papers_csv_to_jsonl(input, output)
     typer.echo(f"Wrote {count} converted papers to {output}")
+
+
+@app.command("split")
+def split_dataset(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    train_count: int = typer.Option(..., "--train-count", min=0),
+    dev_count: int = typer.Option(..., "--dev-count", min=0),
+    test_count: int = typer.Option(..., "--test-count", min=0),
+) -> None:
+    papers = load_papers_jsonl(input)
+    try:
+        manifest = write_paper_splits(
+            papers,
+            output,
+            train_count=train_count,
+            dev_count=dev_count,
+            test_count=test_count,
+            input_path=input,
+            input_sha256=sha256_file(input),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "Wrote paper splits to "
+        f"{output} (train={manifest['splits']['train']['count']}, "
+        f"dev={manifest['splits']['dev']['count']}, "
+        f"test={manifest['splits']['test']['count']})"
+    )
 
 
 @app.command("compare-benchmarks")

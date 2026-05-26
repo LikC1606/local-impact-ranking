@@ -71,6 +71,51 @@ def test_cli_convert_csv_writes_jsonl_that_validate_can_read(tmp_path):
     assert json.loads(output_path.read_text())["paper_id"] == "p1"
 
 
+def test_cli_split_writes_train_dev_test_files_and_manifest(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "splits"
+    records = [
+        {
+            "paper_id": f"p{i}",
+            "title": f"Target {i}",
+            "references": [{"reference_id": f"r{i}", "title": f"Reference {i}"}],
+        }
+        for i in range(1, 6)
+    ]
+    input_path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "split",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_dir),
+            "--train-count",
+            "3",
+            "--dev-count",
+            "1",
+            "--test-count",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote paper splits" in result.stdout
+    assert (output_dir / "train.papers.jsonl").exists()
+    assert (output_dir / "dev.papers.jsonl").exists()
+    assert (output_dir / "test.papers.jsonl").exists()
+    manifest = json.loads((output_dir / "split_manifest.json").read_text())
+    assert len(manifest["input"]["sha256"]) == 64
+    assert manifest["splits"]["train"]["paper_ids"] == ["p1", "p2", "p3"]
+    assert manifest["splits"]["dev"]["paper_ids"] == ["p4"]
+    assert manifest["splits"]["test"]["paper_ids"] == ["p5"]
+
+
 def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_dir = tmp_path / "run"
