@@ -81,6 +81,31 @@ def write_gold_target_comparison(
     )
 
 
+def write_model_selection_decision(
+    comparison_dir: str | Path,
+    *,
+    max_broken_rate: float = 0.05,
+    min_ndcg_delta: float = 0.0,
+) -> None:
+    destination = Path(comparison_dir)
+    report = json.loads(
+        (destination / "target_comparison.json").read_text(encoding="utf-8")
+    )
+    decision = model_selection_decision(
+        report,
+        max_broken_rate=max_broken_rate,
+        min_ndcg_delta=min_ndcg_delta,
+    )
+    (destination / "model_selection_decision.json").write_text(
+        json.dumps(decision, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (destination / "model_selection_decision.md").write_text(
+        render_model_selection_decision_markdown(decision),
+        encoding="utf-8",
+    )
+
+
 def compare_gold_target_reports(
     base_report: dict[str, Any],
     candidate_report: dict[str, Any],
@@ -167,6 +192,49 @@ def compare_gold_target_reports(
     }
 
 
+def model_selection_decision(
+    target_comparison_report: dict[str, Any],
+    *,
+    max_broken_rate: float = 0.05,
+    min_ndcg_delta: float = 0.0,
+) -> dict[str, Any]:
+    summary = target_comparison_report.get("summary", {})
+    common_targets = int(summary.get("common_targets", 0))
+    fixed_count = int(summary.get("fixed_count", 0))
+    broken_count = int(summary.get("broken_count", 0))
+    net_hit_change = int(summary.get("net_hit_change", 0))
+    mean_ndcg_delta = _float(summary.get("mean_ndcg_delta"))
+    broken_rate = broken_count / common_targets if common_targets else 0.0
+
+    checks = {
+        "has_common_targets": common_targets > 0,
+        "net_hit_change_positive": net_hit_change > 0,
+        "mean_ndcg_delta_non_negative": mean_ndcg_delta >= min_ndcg_delta,
+        "broken_rate_within_threshold": broken_rate <= max_broken_rate,
+    }
+    passed_checks = [name for name, passed in checks.items() if passed]
+    failed_checks = [name for name, passed in checks.items() if not passed]
+    passed = not failed_checks
+    return {
+        "recommendation": "promote_to_test" if passed else "keep_base_or_iterate",
+        "pass": passed,
+        "thresholds": {
+            "max_broken_rate": max_broken_rate,
+            "min_ndcg_delta": min_ndcg_delta,
+        },
+        "metrics": {
+            "common_targets": common_targets,
+            "fixed_count": fixed_count,
+            "broken_count": broken_count,
+            "net_hit_change": net_hit_change,
+            "mean_ndcg_delta": mean_ndcg_delta,
+            "broken_rate": broken_rate,
+        },
+        "passed_checks": passed_checks,
+        "failed_checks": failed_checks,
+    }
+
+
 def render_benchmark_comparison_markdown(rows: list[dict[str, Any]]) -> str:
     lines = [
         "# Benchmark Comparison",
@@ -187,6 +255,35 @@ def render_benchmark_comparison_markdown(rows: list[dict[str, Any]]) -> str:
                 f"{_yes_no(row['usable_for_benchmark_report'])} |"
             )
     lines.append("")
+    return "\n".join(lines)
+
+
+def render_model_selection_decision_markdown(decision: dict[str, Any]) -> str:
+    metrics = decision.get("metrics", {})
+    lines = [
+        "# Model Selection Decision",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        f"| recommendation | {decision.get('recommendation', '')} |",
+        f"| pass | {_yes_no(decision.get('pass'))} |",
+    ]
+    for key in [
+        "common_targets",
+        "fixed_count",
+        "broken_count",
+        "net_hit_change",
+        "mean_ndcg_delta",
+        "broken_rate",
+    ]:
+        lines.append(f"| {key} | {_format_summary_value(metrics.get(key))} |")
+    lines.extend(
+        [
+            f"| passed_checks | {_join(decision.get('passed_checks', []))} |",
+            f"| failed_checks | {_join(decision.get('failed_checks', []))} |",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
