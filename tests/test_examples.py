@@ -29,4 +29,12 @@ def test_context_example_demonstrates_context_weighted_score(tmp_path):
     with (output_dir / "rankings" / "papers.csv").open(encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
 
-    assert rows == [{"rank": "1", "id": "r1", "score": "1.500000"}]
+    assert rows == [
+        {
+            "rank": "1",
+            "id": "r1",
+            "score": "1.500000",
+            "normalized_score": "100.000000",
+            "percentile": "100.000000",
+        }
+    ]
