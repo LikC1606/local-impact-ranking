@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn.functional as F
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal CI envs.
+    torch = None
+    F = None
 
 
 @dataclass(frozen=True)
@@ -73,12 +77,13 @@ def tokenize_prompt_response(
 
 def dpo_loss(
     *,
-    policy_chosen_logps: torch.Tensor,
-    policy_rejected_logps: torch.Tensor,
-    reference_chosen_logps: torch.Tensor,
-    reference_rejected_logps: torch.Tensor,
+    policy_chosen_logps: Any,
+    policy_rejected_logps: Any,
+    reference_chosen_logps: Any,
+    reference_rejected_logps: Any,
     beta: float,
-) -> torch.Tensor:
+) -> Any:
+    _require_torch()
     policy_logratios = policy_chosen_logps - policy_rejected_logps
     reference_logratios = reference_chosen_logps - reference_rejected_logps
     logits = beta * (policy_logratios - reference_logratios)
@@ -138,6 +143,7 @@ def run_dpo_lora_training(
     lora_dropout: float,
     device_map: str,
 ) -> None:
+    _require_torch()
     from peft import LoraConfig, TaskType, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -251,7 +257,8 @@ def run_dpo_lora_training(
     tokenizer.save_pretrained(output_dir)
 
 
-def _sequence_logprob(model: Any, encoded: dict[str, list[int]]) -> torch.Tensor:
+def _sequence_logprob(model: Any, encoded: dict[str, list[int]]) -> Any:
+    _require_torch()
     device = next(model.parameters()).device
     input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
     attention_mask = torch.tensor(
@@ -270,6 +277,14 @@ def _sequence_logprob(model: Any, encoded: dict[str, list[int]]) -> torch.Tensor
         index=safe_labels.unsqueeze(-1),
     ).squeeze(-1)
     return (token_logps * valid).sum(dim=-1)
+
+
+def _require_torch() -> None:
+    if torch is None:
+        raise ModuleNotFoundError(
+            "torch is required for DPO LoRA training. Install the training "
+            "environment dependencies before running this command."
+        )
 
 
 if __name__ == "__main__":
