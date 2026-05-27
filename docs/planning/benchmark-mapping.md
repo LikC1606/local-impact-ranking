@@ -6,6 +6,15 @@ Provide public benchmark options when the user has no private dataset, and map e
 
 ## Recommended Order
 
+Use the CLI to print the current machine-readable plan:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan --markdown
+```
+
+The JSON output includes `recommended_order`, `ready_now`, source URLs, local commands, metrics, and transfer-risk notes. Use it as the benchmark checklist before running a larger model comparison or `project-readiness`.
+
 ### 1. PreScience
 
 Use for:
@@ -21,11 +30,28 @@ Map to pipeline:
 - `citation_contexts` only if full text or citation spans are available.
 - `judge` for top-k influential references.
 - `baselines` for citation count and graph metrics.
+- Deterministically shuffle converted candidate references with `--shuffle-seed` to reduce gold-position leakage.
 
 Why first:
 
 - Closest to the current project goal.
 - Already aligned with AI papers and citation graph structure.
+- Public source: https://huggingface.co/datasets/allenai/prescience
+- Current project status: ready.
+- Metrics: `hit@k`, `mrr`, `ndcg@k`, `recall@k`.
+- Smoke script: `scripts/run_prescience_smoke.sh` checks the cached sample target count and redownloads when it is smaller than `TARGETS`, so `TARGETS=100 LIMIT=100` cannot silently reuse a 30-target cache.
+
+Current local benchmark observations:
+
+- 30-target heuristic smoke: `hit_rate=0.933333`, `mean_ndcg=0.657533`, `position_bias_risk=low`.
+- 100-target heuristic smoke: `hit_rate=0.84`, `mean_ndcg=0.601007`, `position_bias_risk=low`.
+- 100-target baseline comparison: title-overlap baseline reaches `mean_ndcg=0.612931`, while the current heuristic judge reaches `mean_ndcg=0.601007`; `judge_beats_all_baselines=false`.
+- After changing the heuristic judge to score `title + abstract`, the 100-target heuristic reaches `mean_ndcg=0.612931` and `hit_rate=0.85`, matching title-overlap but still not beating it.
+- After changing the heuristic judge to IDF-weighted title/abstract overlap, the 100-target heuristic reaches `hit_rate=0.89`, `mean_ndcg=0.634523`, and `judge_beats_all_baselines=true`.
+- Paired bootstrap check on the same 100-target run: judge vs title-overlap NDCG delta is `+0.021592`, but the 95% CI is `[-0.023404, 0.064868]`, so `statistically_positive_ndcg_delta=false`.
+- 300-target IDF heuristic smoke: `hit_rate=0.836667`, `mean_ndcg=0.589646`, judge vs title-overlap NDCG delta `+0.028453`, 95% CI `[0.004613, 0.052724]`, and `statistically_positive_ndcg_delta=true`.
+- Interpretation: the 30-target result was optimistic; the 100-target IDF result is better in mean but not statistically stable, while the 300-target result passes the current bootstrap stability gate.
+- Current action from benchmark evidence: use the IDF heuristic as the no-GPU baseline, then require any local LLM/prompt/fine-tuned judge to beat it on held-out PreScience targets before promotion.
 
 ### 2. SCIDOCA 2025
 
@@ -45,6 +71,8 @@ Why second:
 
 - Good fit for citation-context-aware judging.
 - Useful for testing whether the model can identify missing or likely citations.
+- Current project status: planned.
+- Metrics: `recall@k`, `mrr`, `masked_citation_accuracy`.
 
 ### 3. SciCite / ACL-ARC / MultiCite
 
@@ -62,6 +90,9 @@ Map to pipeline:
 Why third:
 
 - Small, clean, and useful for training the model to tell meaningful citations from background citations.
+- Public source: https://github.com/allenai/scicite
+- Current project status: ready.
+- Metrics: `context_support_rate`, `method_context_rate`, `label_coverage`.
 
 ### 4. SciImpact
 
@@ -78,6 +109,9 @@ Map to pipeline:
 Why fourth:
 
 - Useful, but broader than citation-only influence.
+- Public source: https://flypig23.github.io/sciimpact-homepage/
+- Current project status: planned.
+- Metrics: `pairwise_accuracy`, `win_rate`, `field_macro_accuracy`.
 
 ### 5. BIP! DB / OpenCitations
 
@@ -94,6 +128,9 @@ Map to pipeline:
 Why fifth:
 
 - They are not benchmark tasks by themselves, but they are the best comparison anchors.
+- Public source: https://zenodo.org/records/10804822
+- Current project status: external baseline.
+- Metrics: `spearman`, `kendall_tau`, `top_n_overlap`, `field_year_normalized_correlation`.
 
 ## Task-to-Pipeline Matrix
 

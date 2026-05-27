@@ -62,9 +62,9 @@ def _write_score_table(
     score_details: dict[str, dict[str, float]] | None = None,
 ) -> None:
     rows = _score_rows(scores, score_details)
-    max_score = rows[0][1] if rows else 0.0
+    max_score = max((score for _identifier, score in rows), default=0.0)
     total = len(rows)
-    detail_fields = ["core_score", "expanded_score"] if score_details is not None else []
+    detail_fields = _score_detail_fields(score_details)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
@@ -100,9 +100,17 @@ def _score_rows(
     identifiers = set(scores)
     if score_details is not None:
         identifiers.update(score_details)
+    sort_field = _sort_score_field(score_details)
     return sorted(
         ((identifier, scores.get(identifier, 0.0)) for identifier in identifiers),
-        key=lambda item: (-item[1], item[0]),
+        key=lambda item: (
+            -(
+                score_details.get(item[0], {}).get(sort_field, item[1])
+                if score_details is not None
+                else item[1]
+            ),
+            item[0],
+        ),
     )
 
 
@@ -113,10 +121,46 @@ def _score_detail_row(
     if score_details is None:
         return {}
     details = score_details.get(identifier, {})
-    return {
-        "core_score": f"{details.get('core_score', 0.0):.6f}",
-        "expanded_score": f"{details.get('expanded_score', 0.0):.6f}",
-    }
+    row = {}
+    for field in _score_detail_fields(score_details):
+        value = details.get(field, "")
+        if field in _text_score_detail_fields():
+            row[field] = str(value)
+        else:
+            row[field] = f"{float(value or 0.0):.6f}"
+    return row
+
+
+def _score_detail_fields(score_details: dict[str, dict[str, float]] | None) -> list[str]:
+    if score_details is None:
+        return []
+    preferred_order = [
+        "core_score",
+        "expanded_score",
+        "context_score",
+        "graph_score",
+        "field_year_percentile",
+        "max_single_edge_share",
+        "final_score",
+        "confidence_flag",
+        "confidence_reason",
+    ]
+    present = {field for details in score_details.values() for field in details}
+    ordered = [field for field in preferred_order if field in present]
+    ordered.extend(sorted(present - set(preferred_order)))
+    return ordered
+
+
+def _text_score_detail_fields() -> set[str]:
+    return {"confidence_flag", "confidence_reason"}
+
+
+def _sort_score_field(score_details: dict[str, dict[str, float]] | None) -> str | None:
+    if score_details is None:
+        return None
+    if any("final_score" in details for details in score_details.values()):
+        return "final_score"
+    return None
 
 
 def export_human_audit_sample(

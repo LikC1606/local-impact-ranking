@@ -1,46 +1,50 @@
-# Local Impact Ranking Completion Plan
+# Local Impact Ranking Full Optimization Plan
 
 ## Goal
 
-Finish the local paper-impact ranking MVP so it can run on a user paper dataset, produce dataset-local paper/author/institution/field/year influence rankings, and emit auditable reports for validation, judging, scoring, proxy quality, anomalies, stability, and reproducibility.
+Turn the current local paper-impact ranking MVP into a complete, defensible project deliverable: analyze current weaknesses, ground the design in public methods and benchmarks, implement the missing engineering pieces, verify with tests and smoke runs, and leave clear report-ready documentation.
 
 ## Current Baseline
 
-- CLI supports `validate`, `judge`, `run`, and `benchmarks`.
-- `run` writes rankings, audit logs, baselines, validation reports, proxy reports, anomaly/stability reports, explanations, fine-tuning data, LLaMAFactory configs, artifact index, and manifest.
-- Full tests passed before this plan file was created: `76 passed`.
-- Local smoke passed without starting a model server or using GPU.
+- The project already runs a dataset-local, content-aware impact ranking pipeline.
+- It exports rankings, score evidence, baselines, stability/uncertainty reports, validation reports, model-comparison reports, fine-tuning datasets, LLaMAFactory configs, DPO loader validation, and no-GPU fine-tuning preflight reports.
+- Current verified state before this full optimization pass: full test suite passed with `170 passed`; local smoke passed at `/tmp/local-impact-local-smoke-preflight-final`.
+- Worktree contains many intentional project changes from prior implementation phases. Do not revert unrelated changes.
 
-## Remaining Completion Phases
+## Optimization Phases
 
-- [x] Phase 1: Fill reporting-output gaps from the design docs.
-  - Add field and year ranking exports.
-  - Add a Markdown evaluation report alongside `evaluation.json`.
-  - Include new artifacts in artifact index, scripts, README, and tests.
+- [x] Phase 1: Audit current project capabilities and remaining shortcomings.
+  - Compare implementation against the project goal: local score, ranking, confidence, benchmark, model improvement, and reportability.
+  - Identify concrete gaps that can still weaken credibility or usability.
 
-- [x] Phase 2: Strengthen data-ingestion readiness.
-  - Review whether JSONL-only input is sufficient for the user's expected data handoff.
-  - If needed, add a simple CSV-to-JSONL converter rather than expanding all commands to mixed formats.
+- [x] Phase 2: Research evidence base.
+  - Search current and method-defining papers for scientific impact prediction, influential citation classification, citation-context modeling, bibliometric baselines, graph ranking, uncertainty/robustness, and benchmark datasets.
+  - Search GitHub for reusable benchmark/code assets.
+  - Store decision-relevant findings in `findings.md`.
 
-- [x] Phase 3: Strengthen benchmark path.
-  - Ensure SciCite conversion and benchmark registry are documented and smoke-tested enough to demo without private data.
-  - Add a tiny fixture-based benchmark run if missing.
+- [x] Phase 3: Produce an optimization design.
+  - Write a concise design doc covering scoring, evaluation, training, benchmarks, confidence, CLI workflow, and final deliverables.
+  - Decide what is required for the finished project versus deferred research work.
 
-- [x] Phase 4: Final project audit.
-  - Run full tests.
-  - Run local smoke.
-  - Check CLI help.
-  - Update project summary with final capability boundary and commands.
-  - Add an explicit no-model `score` command for replaying judge audit files.
+- [x] Phase 4: Implement the selected product gaps.
+  - Prioritize features that improve reproducibility, credibility, and ease of use without requiring private data or GPU.
+  - Keep tests close to each behavioral change.
 
-## Decisions
+- [x] Phase 5: Final verification and handoff.
+  - Run targeted tests, full tests, and smoke scripts.
+  - Produce a final project summary with commands, artifacts, limitations, and next optional GPU/model steps.
 
-- Keep the project dataset-local. Do not claim global impact without external graph calibration.
-- Keep human review optional. Reports must distinguish proxy quality from human-validated correctness.
-- Do not start GPU model serving unless explicitly requested.
+## Design Constraints
+
+- The valid claim remains dataset-local impact inside the user-provided corpus unless an external calibrated citation graph is added.
+- Human labels are not available in the short term, so benchmark/proxy evidence must be labeled as such.
+- Do not start GPU-serving or training jobs unless explicitly requested.
+- Prefer no-GPU checks and benchmark smokes for final project completeness.
+- Keep implementation auditable: every score should trace to selected citation edges, prompt/audit records, and scoring configuration.
 
 ## Errors Encountered
 
-| Date | Error | Resolution |
-|---|---|---|
-| 2026-05-25 | Root `task_plan.md`, `findings.md`, and `progress.md` were absent. | Created persistent planning files in the project root. |
+| Date | Error | Attempt | Resolution |
+|---|---|---|---|
+| 2026-05-27 | Existing planning files described an older completion phase. | Replaced `task_plan.md` with this full optimization plan. | Continue using `findings.md` and `progress.md` as persistent logs. |
+| 2026-05-27 | New readiness tests failed at collection because `project_readiness.py` did not exist yet. | Ran target tests before implementation. | Implemented the module, CLI command, auto-run integration, and artifact index entries; target tests passed. |

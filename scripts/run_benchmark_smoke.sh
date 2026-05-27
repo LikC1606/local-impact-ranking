@@ -30,6 +30,8 @@ test -s "${OUTPUT}/reports/evaluation.md"
 test -s "${OUTPUT}/reports/gold_evaluation.json"
 test -s "${OUTPUT}/reports/proxy_evaluation.json"
 test -s "${OUTPUT}/reports/mvp_summary.md"
+test -s "${OUTPUT}/reports/project_readiness.json"
+test -s "${OUTPUT}/reports/project_readiness.md"
 test -s "${OUTPUT}/run_manifest.json"
 
 echo "Benchmark smoke run complete: ${OUTPUT}"

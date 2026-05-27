@@ -55,6 +55,7 @@ def test_evaluation_method_doc_covers_metrics_and_limits():
     assert "gold_candidate_recall" in text
     assert "fixed_count" in text
     assert "broken_count" in text
+    assert "judge_beats_all_baselines" in text
     assert "not global scientific impact" in text
 
 
@@ -62,3 +63,43 @@ def test_readme_links_to_evaluation_method_doc():
     text = Path("README.md").read_text(encoding="utf-8")
 
     assert "[docs/evaluation-method.md](docs/evaluation-method.md)" in text
+
+
+def test_benchmark_mapping_doc_covers_plan_command_and_public_sources():
+    text = Path("docs/planning/benchmark-mapping.md").read_text(encoding="utf-8")
+
+    assert "benchmarks plan" in text
+    assert "https://huggingface.co/datasets/allenai/prescience" in text
+    assert "pairwise_accuracy" in text
+    assert "project-readiness" in text
+
+
+def test_readme_documents_benchmark_plan_command():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "benchmarks plan" in text
+    assert "ready_now" in text
+
+
+def test_readme_documents_report_bundle_command():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "report-bundle" in text
+    assert "bundle_manifest.json" in text
+
+
+def test_readme_links_to_publish_checklist():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "[docs/publish-checklist.md](docs/publish-checklist.md)" in text
+
+
+def test_publish_checklist_documents_github_release_boundaries():
+    text = Path("docs/publish-checklist.md").read_text(encoding="utf-8")
+
+    assert "data/" in text
+    assert "models/" in text
+    assert "runs/" in text
+    assert "pytest -q" in text
+    assert "report-bundle" in text
+    assert "dataset-local" in text

@@ -91,8 +91,10 @@ def write_model_selection_decision(
     report = json.loads(
         (destination / "target_comparison.json").read_text(encoding="utf-8")
     )
+    candidate_benchmark_summary = _read_candidate_benchmark_summary(destination, report)
     decision = model_selection_decision(
         report,
+        candidate_benchmark_summary=candidate_benchmark_summary,
         max_broken_rate=max_broken_rate,
         min_ndcg_delta=min_ndcg_delta,
     )
@@ -195,6 +197,7 @@ def compare_gold_target_reports(
 def model_selection_decision(
     target_comparison_report: dict[str, Any],
     *,
+    candidate_benchmark_summary: dict[str, Any] | None = None,
     max_broken_rate: float = 0.05,
     min_ndcg_delta: float = 0.0,
 ) -> dict[str, Any]:
@@ -205,6 +208,7 @@ def model_selection_decision(
     net_hit_change = int(summary.get("net_hit_change", 0))
     mean_ndcg_delta = _float(summary.get("mean_ndcg_delta"))
     broken_rate = broken_count / common_targets if common_targets else 0.0
+    baseline_quality = _candidate_baseline_quality(candidate_benchmark_summary)
 
     checks = {
         "has_common_targets": common_targets > 0,
@@ -212,6 +216,13 @@ def model_selection_decision(
         "mean_ndcg_delta_non_negative": mean_ndcg_delta >= min_ndcg_delta,
         "broken_rate_within_threshold": broken_rate <= max_broken_rate,
     }
+    if baseline_quality["available"]:
+        checks["judge_beats_all_baselines"] = baseline_quality[
+            "judge_beats_all_baselines"
+        ]
+        checks["judge_baseline_delta_statistically_positive"] = baseline_quality[
+            "statistically_positive_ndcg_delta"
+        ]
     passed_checks = [name for name, passed in checks.items() if passed]
     failed_checks = [name for name, passed in checks.items() if not passed]
     passed = not failed_checks
@@ -229,6 +240,16 @@ def model_selection_decision(
             "net_hit_change": net_hit_change,
             "mean_ndcg_delta": mean_ndcg_delta,
             "broken_rate": broken_rate,
+            "judge_beats_all_baselines": baseline_quality[
+                "judge_beats_all_baselines"
+            ],
+            "judge_mean_ndcg_delta_vs_best_baseline": baseline_quality[
+                "judge_mean_ndcg_delta_vs_best_baseline"
+            ],
+            "judge_ndcg_delta_ci95": baseline_quality["judge_ndcg_delta_ci95"],
+            "statistically_positive_ndcg_delta": baseline_quality[
+                "statistically_positive_ndcg_delta"
+            ],
         },
         "passed_checks": passed_checks,
         "failed_checks": failed_checks,
@@ -275,6 +296,10 @@ def render_model_selection_decision_markdown(decision: dict[str, Any]) -> str:
         "net_hit_change",
         "mean_ndcg_delta",
         "broken_rate",
+        "judge_beats_all_baselines",
+        "judge_mean_ndcg_delta_vs_best_baseline",
+        "judge_ndcg_delta_ci95",
+        "statistically_positive_ndcg_delta",
     ]:
         lines.append(f"| {key} | {_format_summary_value(metrics.get(key))} |")
     lines.extend(
@@ -285,6 +310,46 @@ def render_model_selection_decision_markdown(decision: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _candidate_baseline_quality(
+    candidate_benchmark_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not candidate_benchmark_summary:
+        return {
+            "available": False,
+            "judge_beats_all_baselines": None,
+            "judge_mean_ndcg_delta_vs_best_baseline": None,
+            "judge_ndcg_delta_ci95": None,
+            "statistically_positive_ndcg_delta": None,
+        }
+    comparison = candidate_benchmark_summary.get("gold_baseline_comparison", {})
+    return {
+        "available": bool(comparison),
+        "judge_beats_all_baselines": bool(
+            comparison.get("judge_beats_all_baselines", False)
+        ),
+        "judge_mean_ndcg_delta_vs_best_baseline": comparison.get(
+            "judge_mean_ndcg_delta_vs_best_baseline"
+        ),
+        "judge_ndcg_delta_ci95": comparison.get("judge_ndcg_delta_ci95"),
+        "statistically_positive_ndcg_delta": bool(
+            comparison.get("statistically_positive_ndcg_delta", False)
+        ),
+    }
+
+
+def _read_candidate_benchmark_summary(
+    comparison_dir: Path,
+    target_comparison_report: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidate_run = target_comparison_report.get("candidate_run")
+    if not candidate_run:
+        return None
+    summary_path = comparison_dir.parent / str(candidate_run) / "reports" / "benchmark_summary.json"
+    if not summary_path.exists():
+        return None
+    return json.loads(summary_path.read_text(encoding="utf-8"))
 
 
 def render_gold_target_comparison_markdown(report: dict[str, Any]) -> str:

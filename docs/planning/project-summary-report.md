@@ -42,6 +42,7 @@
 - `judge`：可恢复的独立模型判断阶段，输出 `audit/judge_outputs.jsonl`。
 - `score`：从已有 judge audit 打分，不调用模型。
 - `run`：端到端运行。
+- `project-readiness`：汇总运行产物和质量门，判断 `reportable`、`needs_improvement` 或 `blocked`。
 - `benchmarks`：列出 benchmark 并支持 SciCite 转换。
 - `benchmarks convert-prescience`：把 PreScience JSONL/Parquet shard 转成项目 schema，并保留 gold positive reference IDs。
 
@@ -49,7 +50,7 @@
 
 - 排名：papers、authors、institutions、fields、years。
 - 审计：judge outputs、完整 prompts、scoring edge ledger。
-- 报告：validation、evaluation、gold evaluation、proxy evaluation、baseline comparison、data readiness、anomaly、stability、paper/entity explanations、MVP summary。
+- 报告：validation、evaluation、gold evaluation、proxy evaluation、baseline comparison、data readiness、anomaly、stability、paper/entity explanations、MVP summary、project readiness。
 - 复现：run manifest、artifact index。
 - 微调准备：SFT、proxy-positive SFT、pairwise preference、DPO preference、LLaMAFactory config。
 
@@ -71,9 +72,10 @@ scripts/run_benchmark_smoke.sh /tmp/local-impact-ranking-final-benchmark-smoke
 
 当前测试状态：
 
-- `82 passed`
-- 本地 smoke 通过
-- SciCite benchmark smoke 通过
+- 本轮优化前基线：`170 passed`
+- 本轮优化后全量测试：`175 passed`
+- 本地 smoke 通过：`/tmp/local-impact-ranking-full-optimization-smoke-final`
+- SciCite benchmark smoke 通过：`/tmp/local-impact-ranking-full-optimization-benchmark-smoke-final`
 - 未启动模型服务，未占用 GPU
 
 ## 5. 当前结论
@@ -83,7 +85,7 @@ scripts/run_benchmark_smoke.sh /tmp/local-impact-ranking-final-benchmark-smoke
 - 能接收用户论文数据集，生成 dataset-local 影响力排名。
 - 能使用启发式 judge 做无 GPU smoke，也能接入 OpenAI-compatible 本地模型服务。
 - 能把模型选择、prompt、评分边、报告和运行环境全部落盘审计。
-- 能在没有人工标注的情况下用 proxy evaluation、baseline comparison、anomaly 和 stability 做质量检查。
+- 能在没有人工标注的情况下用 proxy evaluation、baseline comparison、anomaly、stability 和 project readiness 做质量检查。
 
 需要明确的边界：
 

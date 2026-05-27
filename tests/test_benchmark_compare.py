@@ -325,12 +325,29 @@ def test_model_selection_decision_recommends_test_when_candidate_improves_safely
         }
     }
 
-    decision = model_selection_decision(report, max_broken_rate=0.05)
+    candidate_summary = {
+        "gold_baseline_comparison": {
+            "judge_beats_all_baselines": True,
+            "judge_mean_ndcg_delta_vs_best_baseline": 0.02,
+            "judge_ndcg_delta_ci95": [0.01, 0.04],
+            "statistically_positive_ndcg_delta": True,
+        }
+    }
+
+    decision = model_selection_decision(
+        report,
+        candidate_benchmark_summary=candidate_summary,
+        max_broken_rate=0.05,
+    )
 
     assert decision["recommendation"] == "promote_to_test"
     assert decision["pass"] is True
     assert decision["metrics"]["broken_rate"] == 0.02
+    assert decision["metrics"]["judge_beats_all_baselines"] is True
+    assert decision["metrics"]["statistically_positive_ndcg_delta"] is True
     assert "net_hit_change_positive" in decision["passed_checks"]
+    assert "judge_beats_all_baselines" in decision["passed_checks"]
+    assert "judge_baseline_delta_statistically_positive" in decision["passed_checks"]
 
 
 def test_model_selection_decision_blocks_test_when_breakage_is_high():
@@ -349,6 +366,72 @@ def test_model_selection_decision_blocks_test_when_breakage_is_high():
     assert decision["recommendation"] == "keep_base_or_iterate"
     assert decision["pass"] is False
     assert "broken_rate_within_threshold" in decision["failed_checks"]
+
+
+def test_model_selection_decision_blocks_when_candidate_does_not_beat_baselines():
+    report = {
+        "summary": {
+            "common_targets": 100,
+            "fixed_count": 8,
+            "broken_count": 2,
+            "net_hit_change": 6,
+            "mean_ndcg_delta": 0.02,
+        }
+    }
+    candidate_summary = {
+        "gold_baseline_comparison": {
+            "judge_beats_all_baselines": False,
+            "judge_mean_ndcg_delta_vs_best_baseline": -0.012,
+            "judge_ndcg_delta_ci95": [-0.04, 0.01],
+            "statistically_positive_ndcg_delta": False,
+        }
+    }
+
+    decision = model_selection_decision(
+        report,
+        candidate_benchmark_summary=candidate_summary,
+        max_broken_rate=0.05,
+    )
+
+    assert decision["recommendation"] == "keep_base_or_iterate"
+    assert decision["pass"] is False
+    assert decision["metrics"]["judge_beats_all_baselines"] is False
+    assert decision["metrics"]["judge_mean_ndcg_delta_vs_best_baseline"] == -0.012
+    assert "judge_beats_all_baselines" in decision["failed_checks"]
+
+
+def test_model_selection_decision_blocks_when_baseline_win_is_not_statistically_stable():
+    report = {
+        "summary": {
+            "common_targets": 100,
+            "fixed_count": 8,
+            "broken_count": 2,
+            "net_hit_change": 6,
+            "mean_ndcg_delta": 0.02,
+        }
+    }
+    candidate_summary = {
+        "gold_baseline_comparison": {
+            "judge_beats_all_baselines": True,
+            "judge_mean_ndcg_delta_vs_best_baseline": 0.021592,
+            "judge_ndcg_delta_ci95": [-0.023404, 0.064868],
+            "statistically_positive_ndcg_delta": False,
+        }
+    }
+
+    decision = model_selection_decision(
+        report,
+        candidate_benchmark_summary=candidate_summary,
+        max_broken_rate=0.05,
+    )
+
+    assert decision["recommendation"] == "keep_base_or_iterate"
+    assert decision["pass"] is False
+    assert decision["metrics"]["judge_beats_all_baselines"] is True
+    assert decision["metrics"]["statistically_positive_ndcg_delta"] is False
+    assert decision["metrics"]["judge_ndcg_delta_ci95"] == [-0.023404, 0.064868]
+    assert "judge_beats_all_baselines" in decision["passed_checks"]
+    assert "judge_baseline_delta_statistically_positive" in decision["failed_checks"]
 
 
 def test_write_model_selection_decision_exports_json_and_markdown(tmp_path):
@@ -377,6 +460,48 @@ def test_write_model_selection_decision_exports_json_and_markdown(tmp_path):
     assert payload["recommendation"] == "promote_to_test"
     assert "# Model Selection Decision" in markdown
     assert "| recommendation | promote_to_test |" in markdown
+
+
+def test_write_model_selection_decision_uses_candidate_benchmark_baseline_gate(tmp_path):
+    comparison = tmp_path / "comparison"
+    candidate = tmp_path / "candidate"
+    comparison.mkdir()
+    (candidate / "reports").mkdir(parents=True)
+    (comparison / "target_comparison.json").write_text(
+        json.dumps(
+            {
+                "candidate_run": "candidate",
+                "summary": {
+                    "common_targets": 50,
+                    "fixed_count": 5,
+                    "broken_count": 1,
+                    "net_hit_change": 4,
+                    "mean_ndcg_delta": 0.03,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (candidate / "reports" / "benchmark_summary.json").write_text(
+        json.dumps(
+            {
+                "gold_baseline_comparison": {
+                    "judge_beats_all_baselines": False,
+                    "judge_mean_ndcg_delta_vs_best_baseline": -0.01,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    write_model_selection_decision(comparison)
+
+    payload = json.loads((comparison / "model_selection_decision.json").read_text())
+    assert payload["recommendation"] == "keep_base_or_iterate"
+    assert "judge_beats_all_baselines" in payload["failed_checks"]
+    assert payload["metrics"]["judge_mean_ndcg_delta_vs_best_baseline"] == -0.01
 
 
 def test_render_model_selection_decision_markdown_lists_failed_checks():

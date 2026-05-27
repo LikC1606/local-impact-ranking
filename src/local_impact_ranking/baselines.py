@@ -44,18 +44,35 @@ def summarize_baseline_comparison(
     llm_scores: dict[str, float],
     baselines: BibliometricBaselines,
     *,
+    final_scores: dict[str, float] | None = None,
     top_n: int = 100,
 ) -> dict[str, Any]:
     llm_top = set(_top_ids(llm_scores, top_n))
+    final_scores = final_scores or {}
+    final_top = set(_top_ids(final_scores, top_n))
     return {
         "top_n": top_n,
         "baselines": {
-            "citation_count": _comparison_summary(llm_top, baselines.citation_count, top_n),
-            "pagerank": _comparison_summary(llm_top, baselines.pagerank, top_n),
+            "citation_count": _comparison_summary(
+                llm_top,
+                baselines.citation_count,
+                top_n,
+                final_top=final_top,
+                final_scores=final_scores,
+            ),
+            "pagerank": _comparison_summary(
+                llm_top,
+                baselines.pagerank,
+                top_n,
+                final_top=final_top,
+                final_scores=final_scores,
+            ),
             "field_year_normalized_citation": _comparison_summary(
                 llm_top,
                 baselines.field_year_normalized_citation,
                 top_n,
+                final_top=final_top,
+                final_scores=final_scores,
             ),
         },
         "metric_contract": {
@@ -156,11 +173,26 @@ def _comparison_summary(
     llm_top: set[str],
     baseline_scores: dict[str, float],
     top_n: int,
+    *,
+    final_top: set[str] | None = None,
+    final_scores: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     baseline_top = set(_top_ids(baseline_scores, top_n))
+    final_top = final_top or set()
+    final_scores = final_scores or {}
     return {
         "top_n_overlap": len(llm_top & baseline_top),
         "top_n_overlap_rate": len(llm_top & baseline_top) / len(llm_top) if llm_top else 0.0,
+        "raw_top_n_overlap": len(llm_top & baseline_top),
+        "raw_top_n_overlap_rate": len(llm_top & baseline_top) / len(llm_top)
+        if llm_top
+        else 0.0,
+        "final_top_n_overlap": len(final_top & baseline_top),
+        "final_top_n_overlap_rate": len(final_top & baseline_top) / len(final_top)
+        if final_top
+        else 0.0,
+        "final_spearman": _spearman(final_scores, baseline_scores),
+        "final_kendall_tau": _kendall_tau(final_scores, baseline_scores),
     }
 
 
@@ -171,6 +203,54 @@ def _top_ids(scores: dict[str, float], top_n: int) -> list[str]:
             :top_n
         ]
     ]
+
+
+def _spearman(first_scores: dict[str, float], second_scores: dict[str, float]) -> float:
+    identifiers = sorted(set(first_scores) & set(second_scores))
+    if len(identifiers) < 2:
+        return 0.0
+    first_ranks = _rank_map(first_scores, identifiers)
+    second_ranks = _rank_map(second_scores, identifiers)
+    n = len(identifiers)
+    squared_diffs = sum(
+        (first_ranks[identifier] - second_ranks[identifier]) ** 2
+        for identifier in identifiers
+    )
+    return 1.0 - (6.0 * squared_diffs) / (n * (n * n - 1))
+
+
+def _kendall_tau(first_scores: dict[str, float], second_scores: dict[str, float]) -> float:
+    identifiers = sorted(set(first_scores) & set(second_scores))
+    if len(identifiers) < 2:
+        return 0.0
+    first_ranks = _rank_map(first_scores, identifiers)
+    second_ranks = _rank_map(second_scores, identifiers)
+    concordant = 0
+    discordant = 0
+    for left_index, left_id in enumerate(identifiers):
+        for right_id in identifiers[left_index + 1 :]:
+            first_delta = first_ranks[left_id] - first_ranks[right_id]
+            second_delta = second_ranks[left_id] - second_ranks[right_id]
+            product = first_delta * second_delta
+            if product > 0:
+                concordant += 1
+            elif product < 0:
+                discordant += 1
+    total = concordant + discordant
+    if total == 0:
+        return 0.0
+    return (concordant - discordant) / total
+
+
+def _rank_map(scores: dict[str, float], identifiers: list[str]) -> dict[str, int]:
+    ordered = [
+        identifier
+        for identifier, _score in sorted(
+            ((identifier, scores[identifier]) for identifier in identifiers),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+    return {identifier: rank for rank, identifier in enumerate(ordered, start=1)}
 
 
 def _write_score_table(path: Path, scores: dict[str, float]) -> None:

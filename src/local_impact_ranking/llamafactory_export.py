@@ -19,8 +19,20 @@ def export_llamafactory_configs(
             **_sharegpt_dataset("dpo_preferences.jsonl"),
             "ranking": True,
         },
+        "impact_context_hard_negative_dpo": {
+            **_sharegpt_dataset("context_hard_negative_dpo.jsonl"),
+            "ranking": True,
+        },
+        "impact_method_context_contrastive_dpo": {
+            **_sharegpt_dataset("method_context_contrastive_dpo.jsonl"),
+            "ranking": True,
+        },
         "impact_gold_hard_negative_dpo": {
             **_sharegpt_dataset("gold_hard_negative_dpo.jsonl"),
+            "ranking": True,
+        },
+        "impact_merged_dpo_preferences": {
+            **_sharegpt_dataset("merged_dpo_preferences.jsonl"),
             "ranking": True,
         },
     }
@@ -91,7 +103,7 @@ def _dpo_yaml(model_name_or_path: str, output_root: Path) -> str:
         "do_train: true\n"
         f"model_name_or_path: {model_name_or_path}\n"
         "dataset_dir: .\n"
-        "dataset: impact_dpo_preferences,impact_gold_hard_negative_dpo\n"
+        "dataset: impact_merged_dpo_preferences\n"
         "template: qwen\n"
         "finetuning_type: lora\n"
         f"output_dir: {output_root / 'impact-dpo'}\n"

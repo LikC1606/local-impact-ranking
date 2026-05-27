@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import re
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -176,21 +179,20 @@ class HeuristicJudge:
     """Deterministic smoke-test judge; real runs should use a local LLM adapter."""
 
     def judge(self, paper: Paper, top_k: int = 5) -> JudgeResult:
-        abstract_terms = _tokenize(paper.abstract or paper.title)
-        scored: list[tuple[int, str]] = []
+        idf = _paper_local_idf(paper)
+        scored: list[tuple[float, str]] = []
         for reference in paper.references:
-            title_terms = _tokenize(reference.title)
-            overlap = len(abstract_terms & title_terms)
-            scored.append((overlap, reference.reference_id or ""))
+            score = _heuristic_reference_score(paper, reference.title, idf)
+            scored.append((score, reference.reference_id or ""))
         scored.sort(key=lambda item: (-item[0], item[1]))
         selected = [
             {
                 "reference_id": reference_id,
                 "rank": rank,
-                "confidence": 1.0 if overlap > 0 else 0.1,
-                "rationale": "Selected by deterministic lexical overlap baseline.",
+                "confidence": 1.0 if score > 0 else 0.1,
+                "rationale": "Selected by deterministic IDF-weighted lexical baseline.",
             }
-            for rank, (overlap, reference_id) in enumerate(scored[:top_k], start=1)
+            for rank, (score, reference_id) in enumerate(scored[:top_k], start=1)
         ]
         result = parse_judge_output(
             json.dumps({"target_paper_id": paper.paper_id, "selected_references": selected}),
@@ -254,8 +256,86 @@ class OpenAICompatibleJudge:
         return str(payload["choices"][0]["message"]["content"])
 
 
-def _tokenize(text: str) -> set[str]:
-    return {token.lower() for token in text.replace("-", " ").split() if len(token) > 3}
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")
+STOPWORDS = {
+    "about",
+    "after",
+    "also",
+    "analysis",
+    "and",
+    "approach",
+    "are",
+    "based",
+    "between",
+    "data",
+    "dataset",
+    "from",
+    "into",
+    "learning",
+    "method",
+    "methods",
+    "model",
+    "models",
+    "network",
+    "networks",
+    "our",
+    "paper",
+    "result",
+    "results",
+    "study",
+    "studies",
+    "that",
+    "the",
+    "their",
+    "this",
+    "using",
+    "with",
+}
+
+
+def _tokenize(text: str, *, remove_stopwords: bool = False) -> set[str]:
+    tokens = {
+        token.lower()
+        for token in TOKEN_RE.findall(text or "")
+        if len(token) > 2
+    }
+    if remove_stopwords:
+        return {token for token in tokens if token not in STOPWORDS}
+    return tokens
+
+
+def _paper_local_idf(paper: Paper) -> dict[str, float]:
+    documents = [
+        _tokenize(" ".join([paper.title, paper.abstract or ""]), remove_stopwords=True)
+    ]
+    documents.extend(
+        _tokenize(reference.title, remove_stopwords=True)
+        for reference in paper.references
+    )
+    document_frequency: Counter[str] = Counter()
+    for document in documents:
+        document_frequency.update(document)
+    document_count = len(documents)
+    return {
+        token: math.log((document_count + 1) / (frequency + 0.5))
+        for token, frequency in document_frequency.items()
+    }
+
+
+def _heuristic_reference_score(
+    paper: Paper,
+    reference_title: str,
+    idf: dict[str, float],
+) -> float:
+    target_title_terms = _tokenize(paper.title, remove_stopwords=True)
+    target_abstract_terms = _tokenize(paper.abstract or "", remove_stopwords=True)
+    reference_terms = _tokenize(reference_title, remove_stopwords=True)
+    title_overlap = target_title_terms & reference_terms
+    abstract_overlap = target_abstract_terms & reference_terms
+    return (
+        3.0 * sum(idf.get(token, 1.0) for token in title_overlap)
+        + sum(idf.get(token, 1.0) for token in abstract_overlap)
+    )
 
 
 def _needs_repair(result: JudgeResult) -> bool:

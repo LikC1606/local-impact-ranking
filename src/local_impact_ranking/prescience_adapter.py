@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -11,6 +12,7 @@ def convert_prescience_file(
     *,
     limit: int | None = None,
     max_candidates: int = 50,
+    shuffle_seed: int = 13,
 ) -> int:
     records = list(_iter_records(input_path))
     return convert_prescience_records(
@@ -18,6 +20,7 @@ def convert_prescience_file(
         output_path,
         limit=limit,
         max_candidates=max_candidates,
+        shuffle_seed=shuffle_seed,
     )
 
 
@@ -27,6 +30,7 @@ def convert_prescience_records(
     *,
     limit: int | None = None,
     max_candidates: int = 50,
+    shuffle_seed: int = 13,
 ) -> int:
     records_list = list(records)
     by_corpus_id = {
@@ -47,6 +51,7 @@ def convert_prescience_records(
                 by_corpus_id,
                 publication_history_by_author_id,
                 max_candidates=max_candidates,
+                shuffle_seed=shuffle_seed,
             )
             handle.write(json.dumps(paper, ensure_ascii=False) + "\n")
             count += 1
@@ -93,6 +98,7 @@ def _target_to_paper(
     publication_history_by_author_id: dict[str, list[str]],
     *,
     max_candidates: int,
+    shuffle_seed: int,
 ) -> dict[str, Any]:
     positive_ids = _key_reference_ids(record)
     extra_candidate_ids = []
@@ -103,6 +109,11 @@ def _target_to_paper(
         positive_ids,
         extra_candidate_ids=extra_candidate_ids,
         max_candidates=max_candidates,
+    )
+    candidate_ids = _shuffle_candidate_ids(
+        candidate_ids,
+        target_id=_record_id(record),
+        seed=shuffle_seed,
     )
     return {
         "paper_id": _record_id(record),
@@ -124,6 +135,8 @@ def _target_to_paper(
             "roles": record.get("roles") or [],
             "categories": record.get("categories") or [],
             "citation_trajectory": record.get("citation_trajectory") or [],
+            "candidate_ordering": "deterministic_shuffle",
+            "candidate_shuffle_seed": shuffle_seed,
             "prescience_positive_reference_ids": positive_ids,
             "prescience_key_reference_citations": _key_reference_citations(record),
         },
@@ -181,6 +194,18 @@ def _candidate_ids(
         if len(_dedupe(candidate_ids)) >= max_candidates:
             return _dedupe(candidate_ids)[:max_candidates]
     return _dedupe(candidate_ids)[:max_candidates]
+
+
+def _shuffle_candidate_ids(
+    candidate_ids: list[str],
+    *,
+    target_id: str,
+    seed: int,
+) -> list[str]:
+    shuffled = list(candidate_ids)
+    rng = random.Random(f"{seed}:{target_id}")
+    rng.shuffle(shuffled)
+    return shuffled
 
 
 def _publication_history_by_author_id(records: list[dict[str, Any]]) -> dict[str, list[str]]:

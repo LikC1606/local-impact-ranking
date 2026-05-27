@@ -135,6 +135,108 @@ def test_cli_train_dpo_delegates_to_lora_trainer(monkeypatch, tmp_path):
     assert captured["device_map"] == "cpu"
 
 
+def test_cli_validate_dpo_data_reports_load_quality(tmp_path):
+    train_file = tmp_path / "preferences.jsonl"
+    train_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "conversations": [{"from": "human", "value": "Prompt"}],
+                        "chosen": {"from": "gpt", "value": "r1"},
+                        "rejected": {"from": "gpt", "value": "r2"},
+                        "target_paper_id": "p1",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "conversations": [{"from": "human", "value": "Prompt"}],
+                        "chosen": {"from": "gpt", "value": "r2"},
+                        "rejected": {"from": "gpt", "value": "r1"},
+                        "target_paper_id": "p1",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "dpo-validation"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate-dpo-data",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "loaded=1" in result.stdout
+    assert "reverse_conflicts=1" in result.stdout
+    report = json.loads((output_dir / "dpo_data_validation.json").read_text())
+    assert report["raw_record_count"] == 2
+    assert report["loaded_example_count"] == 1
+    assert report["reverse_conflict_count"] == 1
+
+
+def test_cli_finetuning_preflight_writes_training_decision(tmp_path):
+    run_dir = tmp_path / "run"
+    finetuning_dir = run_dir / "finetuning"
+    finetuning_dir.mkdir(parents=True)
+    (finetuning_dir / "finetuning_readiness.json").write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "effective_sft_record_count": 25,
+                    "effective_dpo_record_count": 12,
+                },
+                "readiness": {
+                    "ready_for_sft_smoke": True,
+                    "ready_for_dpo_smoke": True,
+                    "ready_for_full_dpo": False,
+                    "has_training_data_quality_blockers": False,
+                    "training_data_quality_blockers": [],
+                },
+                "recommendation": {
+                    "next_step": "dpo_smoke",
+                    "reason": "enough preference records for a short DPO smoke run",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    records = [
+        {
+            "conversations": [{"from": "human", "value": f"Prompt {i}"}],
+            "chosen": {"from": "gpt", "value": f"r{i}-chosen"},
+            "rejected": {"from": "gpt", "value": f"r{i}-rejected"},
+            "target_paper_id": f"p{i}",
+        }
+        for i in range(12)
+    ]
+    (finetuning_dir / "merged_dpo_preferences.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["finetuning-preflight", str(run_dir)])
+
+    assert result.exit_code == 0
+    assert "recommended=dpo_smoke" in result.stdout
+    report = json.loads((finetuning_dir / "finetuning_preflight.json").read_text())
+    markdown = (finetuning_dir / "finetuning_preflight.md").read_text()
+    assert report["decision"]["can_start_dpo_smoke"] is True
+    assert report["decision"]["recommended_next_step"] == "dpo_smoke"
+    assert report["dpo_data_validation"]["loaded_example_count"] == 12
+    assert "# Finetuning Preflight" in markdown
+    assert "| can_start_dpo_smoke | yes |" in markdown
+
+
 def test_cli_split_writes_train_dev_test_files_and_manifest(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_dir = tmp_path / "splits"
@@ -250,6 +352,10 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert (output_dir / "reports" / "evaluation.json").exists()
     assert (output_dir / "reports" / "evaluation.md").exists()
     assert (output_dir / "reports" / "gold_evaluation.json").exists()
+    assert (output_dir / "reports" / "gold_candidate_position.json").exists()
+    assert (output_dir / "reports" / "gold_candidate_position.md").exists()
+    assert (output_dir / "reports" / "gold_baseline_comparison.json").exists()
+    assert (output_dir / "reports" / "gold_baseline_comparison.md").exists()
     assert (output_dir / "reports" / "gold_evaluation.md").exists()
     assert (output_dir / "review" / "human_audit_sample.csv").exists()
     assert (output_dir / "run_manifest.json").exists()
@@ -264,17 +370,35 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert (output_dir / "reports" / "anomaly_report.json").exists()
     assert (output_dir / "reports" / "scoring_config.json").exists()
     assert (output_dir / "reports" / "stability_report.json").exists()
+    assert (output_dir / "reports" / "paper_stability_report.json").exists()
+    assert (output_dir / "reports" / "paper_stability_report.csv").exists()
+    assert (output_dir / "reports" / "paper_score_uncertainty_report.json").exists()
+    assert (output_dir / "reports" / "paper_score_uncertainty_report.csv").exists()
     assert (output_dir / "reports" / "mvp_summary.json").exists()
     assert (output_dir / "reports" / "mvp_summary.md").exists()
     assert (output_dir / "reports" / "benchmark_summary.json").exists()
     assert (output_dir / "reports" / "benchmark_summary.md").exists()
+    assert (output_dir / "reports" / "project_readiness.json").exists()
+    assert (output_dir / "reports" / "project_readiness.md").exists()
     assert (output_dir / "reports" / "paper_explanations.json").exists()
     assert (output_dir / "reports" / "entity_explanations.json").exists()
+    assert (output_dir / "reports" / "paper_evidence_report.json").exists()
+    assert (output_dir / "reports" / "paper_evidence_report.csv").exists()
+    evidence_csv = (output_dir / "reports" / "paper_evidence_report.csv").read_text()
+    assert "score_ci_width" in evidence_csv
+    assert "uncertainty_band" in evidence_csv
     assert (output_dir / "finetuning" / "format_sft.jsonl").exists()
     assert (output_dir / "finetuning" / "proxy_positive_sft.jsonl").exists()
     assert (output_dir / "finetuning" / "pairwise_preferences.jsonl").exists()
     assert (output_dir / "finetuning" / "dpo_preferences.jsonl").exists()
+    assert (output_dir / "finetuning" / "context_hard_negative_dpo.jsonl").exists()
+    assert (output_dir / "finetuning" / "method_context_contrastive_dpo.jsonl").exists()
     assert (output_dir / "finetuning" / "gold_hard_negative_dpo.jsonl").exists()
+    assert (output_dir / "finetuning" / "merged_dpo_preferences.jsonl").exists()
+    assert (output_dir / "finetuning" / "finetuning_readiness.json").exists()
+    assert (output_dir / "finetuning" / "finetuning_readiness.md").exists()
+    assert (output_dir / "finetuning" / "finetuning_preflight.json").exists()
+    assert (output_dir / "finetuning" / "finetuning_preflight.md").exists()
     assert (output_dir / "finetuning" / "llamafactory_dataset_info.json").exists()
     assert (output_dir / "finetuning" / "llamafactory_sft.yaml").exists()
     assert (output_dir / "finetuning" / "llamafactory_dpo.yaml").exists()
@@ -285,16 +409,77 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert "rankings/fields.csv" in artifact_paths
     assert "reports/evaluation.md" in artifact_paths
     assert "reports/gold_evaluation.json" in artifact_paths
+    assert "reports/gold_candidate_position.json" in artifact_paths
+    assert "reports/gold_candidate_position.md" in artifact_paths
+    assert "reports/gold_baseline_comparison.json" in artifact_paths
+    assert "reports/gold_baseline_comparison.md" in artifact_paths
+    assert "reports/paper_stability_report.json" in artifact_paths
+    assert "reports/paper_stability_report.csv" in artifact_paths
+    assert "reports/paper_score_uncertainty_report.json" in artifact_paths
+    assert "reports/paper_score_uncertainty_report.csv" in artifact_paths
+    assert "finetuning/finetuning_readiness.json" in artifact_paths
+    assert "finetuning/finetuning_readiness.md" in artifact_paths
+    assert "finetuning/finetuning_preflight.json" in artifact_paths
+    assert "finetuning/finetuning_preflight.md" in artifact_paths
+    assert "finetuning/context_hard_negative_dpo.jsonl" in artifact_paths
+    assert "finetuning/method_context_contrastive_dpo.jsonl" in artifact_paths
+    assert "finetuning/merged_dpo_preferences.jsonl" in artifact_paths
     assert "reports/benchmark_summary.md" in artifact_paths
+    assert "reports/project_readiness.json" in artifact_paths
+    assert "reports/project_readiness.md" in artifact_paths
     benchmark_summary = json.loads(
         (output_dir / "reports" / "benchmark_summary.json").read_text()
     )
+    project_readiness = json.loads(
+        (output_dir / "reports" / "project_readiness.json").read_text()
+    )
     assert benchmark_summary["benchmark"]["paper_count"] == 1
     assert benchmark_summary["judge_quality"]["parse_success_rate"] == 1.0
+    assert "gold_baseline_comparison" in benchmark_summary
+    assert project_readiness["claim_scope"] == "dataset-local content-aware impact ranking"
     prompt_record = json.loads((output_dir / "audit" / "prompts.jsonl").read_text())
     assert len(prompt_record["prompt_sha256"]) == 64
     assert prompt_record["candidate_reference_ids"] == ["r1"]
     assert "Candidate references" in prompt_record["prompt"]
+
+
+def test_cli_report_bundle_exports_report_ready_directory(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    run_dir = tmp_path / "run"
+    bundle_dir = tmp_path / "bundle"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Target Representation Paper",
+                "abstract": "representation learning",
+                "references": [{"reference_id": "r1", "title": "Representation Learning"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_result = CliRunner().invoke(
+        app,
+        ["run", "--input", str(input_path), "--output", str(run_dir), "--top-k", "1"],
+    )
+    assert run_result.exit_code == 0
+
+    result = CliRunner().invoke(
+        app,
+        ["report-bundle", str(run_dir), "--output", str(bundle_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote report bundle" in result.stdout
+    assert (bundle_dir / "README.md").exists()
+    assert (bundle_dir / "bundle_manifest.json").exists()
+    assert (bundle_dir / "rankings" / "papers.csv").exists()
+    assert (bundle_dir / "reports" / "project_readiness.md").exists()
+    manifest = json.loads((bundle_dir / "bundle_manifest.json").read_text())
+    assert manifest["claim_scope"] == "dataset-local content-aware impact ranking"
+    assert "rankings/papers.csv" in manifest["copied_files"]
+    assert "reports/project_readiness.json" in manifest["copied_files"]
 
 
 def test_cli_run_strict_validation_stops_on_validation_errors(tmp_path):
@@ -611,7 +796,12 @@ def test_cli_run_records_context_weighted_scoring_config(tmp_path):
     assert summary["scoring"]["version"] == "score_v2_context_weighted"
     assert summary["claim_scope"] == "dataset-local content-aware impact ranking"
     assert summary["ranking_preview"]["papers"][0]["id"] == "r1"
+    assert summary["paper_stability"]["insufficient_sample_papers"] == 1
+    assert summary["paper_score_uncertainty"]["stable_papers"] == 1
+    assert (output_dir / "reports" / "paper_score_uncertainty_report.csv").exists()
     assert "# Local Impact Ranking MVP Summary" in summary_md
+    assert "## Paper Stability" in summary_md
+    assert "## Paper Score Uncertainty" in summary_md
     assert "## Top Papers" in summary_md
     assert manifest["scoring"]["version"] == "score_v2_context_weighted"
 
@@ -1216,6 +1406,76 @@ def test_cli_benchmark_status_prints_json_or_markdown(tmp_path):
     assert md_result.exit_code == 0
     assert "# Benchmark Status" in md_result.output
     assert "| remaining | 1 |" in md_result.output
+
+
+def test_cli_project_readiness_writes_and_prints_report(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "run"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Target",
+                "references": [{"reference_id": "r1", "title": "Known"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_result = CliRunner().invoke(
+        app,
+        ["run", "--input", str(input_path), "--output", str(output_dir), "--top-k", "1"],
+    )
+
+    json_result = CliRunner().invoke(app, ["project-readiness", str(output_dir)])
+    md_result = CliRunner().invoke(
+        app,
+        ["project-readiness", str(output_dir), "--markdown"],
+    )
+
+    assert run_result.exit_code == 0
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    assert payload["claim_scope"] == "dataset-local content-aware impact ranking"
+    assert (output_dir / "reports" / "project_readiness.json").exists()
+    assert (output_dir / "reports" / "project_readiness.md").exists()
+    assert md_result.exit_code == 0
+    assert "# Project Readiness" in md_result.output
+    assert "| claim_scope | dataset-local content-aware impact ranking |" in md_result.output
+
+
+def test_cli_project_readiness_refreshes_artifact_index_for_existing_run(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "run"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Target",
+                "references": [{"reference_id": "r1", "title": "Known"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_result = CliRunner().invoke(
+        app,
+        ["run", "--input", str(input_path), "--output", str(output_dir), "--top-k", "1"],
+    )
+    (output_dir / "reports" / "artifact_index.json").unlink()
+
+    result = CliRunner().invoke(app, ["project-readiness", str(output_dir)])
+
+    assert run_result.exit_code == 0
+    assert result.exit_code == 0
+    artifact_index = json.loads(
+        (output_dir / "reports" / "artifact_index.json").read_text(encoding="utf-8")
+    )
+    artifact_paths = {artifact["path"]: artifact for artifact in artifact_index["artifacts"]}
+    assert artifact_index["missing_count"] == 0
+    assert artifact_paths["reports/artifact_index.json"]["exists"] is True
+    assert artifact_paths["reports/project_readiness.json"]["exists"] is True
+    assert artifact_paths["reports/project_readiness.md"]["exists"] is True
 
 
 def test_cli_analyze_gold_errors_writes_report(tmp_path):

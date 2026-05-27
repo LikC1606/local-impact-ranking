@@ -61,6 +61,29 @@ Interpretation:
 
 Gold evaluation is benchmark-specific reference-selection evaluation, not global scientific impact.
 
+## Gold Baseline Comparison
+
+Files:
+
+- `reports/gold_baseline_comparison.json`
+- `reports/gold_baseline_comparison.md`
+
+This report compares the judge against simple candidate-only baselines on the same labeled targets:
+
+- `candidate_order`: select the first `top_k` converted candidates.
+- `title_overlap`: rank candidates by lexical overlap with the target title/abstract.
+- `random`: seeded random candidate selection.
+
+Key fields:
+
+- `judge_beats_all_baselines`: true only when the judge beats the strongest baseline by mean NDCG.
+- `judge_mean_ndcg_delta_vs_best_baseline`: positive means the judge is better than the strongest simple baseline.
+- `judge_ndcg_delta_ci95`: paired bootstrap 95% interval for the judge's per-target NDCG delta versus the strongest baseline.
+- `statistically_positive_ndcg_delta`: true only when the bootstrap interval lower bound is above zero.
+- `needs_model_or_prompt_improvement`: true when the judge does not beat these baselines or the bootstrap NDCG-delta interval still includes zero.
+
+This check prevents reporting a model as useful when it is only matching or underperforming simple retrieval heuristics.
+
 ## Gold Error Analysis
 
 Command:
@@ -137,6 +160,48 @@ Key fields:
 
 Target-level comparison is the preferred way to inspect whether a prompt or fine-tuned model changed behavior in useful ways or merely shuffled mostly unchanged outputs.
 
+## Model Selection Decision
+
+Files:
+
+- `model_selection_decision.json`
+- `model_selection_decision.md`
+
+The dev-set decision recommends `promote_to_test` only when:
+
+- common labeled targets exist;
+- `net_hit_change` is positive;
+- `mean_ndcg_delta` is at least the configured minimum;
+- `broken_count / common_targets` is below the configured maximum;
+- when the candidate run's `reports/benchmark_summary.json` is available, `judge_beats_all_baselines=true` and `statistically_positive_ndcg_delta=true`.
+
+This prevents promoting a candidate model that improves over the previous model but still fails to beat simple candidate baselines such as title overlap, or only beats them by an unstable mean delta.
+
+## Baseline Alignment
+
+File:
+
+- `reports/baseline_comparison.json`
+
+This report compares the local impact scores against traditional bibliometric baselines:
+
+- `citation_count`
+- `pagerank`
+- `field_year_normalized_citation`
+
+For each baseline it reports:
+
+- `raw_top_n_overlap_rate`: overlap between raw selected-reference score top-N and baseline top-N.
+- `final_top_n_overlap_rate`: overlap between fused `final_score` top-N and baseline top-N.
+- `final_spearman`: Spearman rank correlation between `final_score` and the baseline.
+- `final_kendall_tau`: pairwise rank agreement between `final_score` and the baseline.
+
+Interpretation:
+
+- High alignment with citation count or PageRank means the local model is broadly consistent with conventional citation signals.
+- Low alignment is not automatically wrong, but it must be explained by citation-context evidence, field/year normalization, or known dataset scope.
+- Negative correlation is a warning that the final score may be ranking against the graph/citation signal and should be inspected through `paper_evidence_report.csv`.
+
 ## Reporting Limits
 
 - Strong benchmark metrics do not prove global scientific impact.
@@ -144,3 +209,35 @@ Target-level comparison is the preferred way to inspect whether a prompt or fine
 - Benchmarks usually evaluate reference selection, not downstream author or institution rankings.
 - Results are sensitive to target-paper coverage, candidate construction, metadata quality, and citation-context availability.
 - Report every run with its `run_manifest.json`, `scoring_config.json`, judge audit, and input hash.
+
+## Project Readiness Gate
+
+Command:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli project-readiness runs/example --markdown
+```
+
+Files:
+
+- `reports/project_readiness.json`
+- `reports/project_readiness.md`
+
+This is the final reportability gate. It aggregates artifact completeness, validation, judge reliability, scoring config, ranking scope, gold/proxy evidence, stability, anomaly risk, fine-tuning preflight, and claim boundaries.
+
+It also records `evidence_level`:
+
+- `gold_validated`: benchmark gold labels exist, such as PreScience positive references.
+- `proxy_supported`: no gold labels exist, but selected references have proxy support from citation contexts or bibliometric baselines.
+- `proxy_only_needs_review`: proxy evidence exists, but unsupported-selection risk is high.
+- `no_external_or_proxy_evidence`: neither gold labels nor proxy support are available.
+
+The report includes a reproducibility summary copied from `run_manifest.json`, including input hashes, normalized record count, top-k, judge/model, prompt version, scoring version, git revision, and whether the worktree was dirty when the run manifest was created.
+
+Statuses:
+
+- `reportable`: hard gates pass and no warning gates fail.
+- `needs_improvement`: hard gates pass, but warnings such as missing gold labels, exploratory ranking scope, high unsupported-selection rate, weak stability, or single-edge dominance must be disclosed.
+- `blocked`: missing required artifacts, validation failure, missing judge results, parse reliability failure, invalid selections, top-k violations, missing scoring config, or missing paper ranking.
+
+The readiness gate does not create a new impact metric. It decides whether the existing run evidence is strong enough to report under the dataset-local claim boundary.

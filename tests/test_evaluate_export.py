@@ -108,9 +108,39 @@ def test_export_rankings_csv_writes_sorted_rankings(tmp_path):
         field_scores={"AI": 2.5},
         year_scores={"2024": 2.0, "2023": 1.0},
         paper_score_details={
-            "p1": {"core_score": 2.0, "expanded_score": 2.2},
-            "p2": {"core_score": 1.0, "expanded_score": 1.4},
-            "p3": {"core_score": 0.0, "expanded_score": 0.3},
+            "p1": {
+                "core_score": 2.0,
+                "expanded_score": 2.2,
+                "context_score": 0.4,
+                "graph_score": 0.8,
+                "field_year_percentile": 75.0,
+                "max_single_edge_share": 0.4,
+                "final_score": 80.0,
+                "confidence_flag": "stable",
+                "confidence_reason": "context and graph support present",
+            },
+            "p2": {
+                "core_score": 1.0,
+                "expanded_score": 1.4,
+                "context_score": 0.2,
+                "graph_score": 0.1,
+                "field_year_percentile": 25.0,
+                "max_single_edge_share": 1.0,
+                "final_score": 30.0,
+                "confidence_flag": "fragile",
+                "confidence_reason": "limited support",
+            },
+            "p3": {
+                "core_score": 0.0,
+                "expanded_score": 0.3,
+                "context_score": 0.0,
+                "graph_score": 0.0,
+                "field_year_percentile": 0.0,
+                "max_single_edge_share": 0.0,
+                "final_score": 0.0,
+                "confidence_flag": "low_evidence",
+                "confidence_reason": "expanded only",
+            },
         },
     )
 
@@ -125,6 +155,13 @@ def test_export_rankings_csv_writes_sorted_rankings(tmp_path):
         "score": "2.000000",
         "core_score": "2.000000",
         "expanded_score": "2.200000",
+        "context_score": "0.400000",
+        "graph_score": "0.800000",
+        "field_year_percentile": "75.000000",
+        "max_single_edge_share": "0.400000",
+        "final_score": "80.000000",
+        "confidence_flag": "stable",
+        "confidence_reason": "context and graph support present",
         "normalized_score": "100.000000",
         "percentile": "100.000000",
     }
@@ -134,11 +171,25 @@ def test_export_rankings_csv_writes_sorted_rankings(tmp_path):
         "score": "1.000000",
         "core_score": "1.000000",
         "expanded_score": "1.400000",
+        "context_score": "0.200000",
+        "graph_score": "0.100000",
+        "field_year_percentile": "25.000000",
+        "max_single_edge_share": "1.000000",
+        "final_score": "30.000000",
+        "confidence_flag": "fragile",
+        "confidence_reason": "limited support",
         "normalized_score": "50.000000",
         "percentile": "66.666667",
     }
     assert rows[2]["core_score"] == "0.000000"
     assert rows[2]["expanded_score"] == "0.300000"
+    assert rows[2]["context_score"] == "0.000000"
+    assert rows[2]["graph_score"] == "0.000000"
+    assert rows[2]["field_year_percentile"] == "0.000000"
+    assert rows[2]["max_single_edge_share"] == "0.000000"
+    assert rows[2]["final_score"] == "0.000000"
+    assert rows[2]["confidence_flag"] == "low_evidence"
+    assert rows[2]["confidence_reason"] == "expanded only"
     assert rows[2]["normalized_score"] == "0.000000"
     assert rows[2]["percentile"] == "33.333333"
     assert (tmp_path / "authors.csv").exists()
@@ -169,6 +220,29 @@ def test_export_rankings_csv_keeps_papers_with_expanded_only_scores(tmp_path):
     assert rows[1]["score"] == "0.000000"
     assert rows[1]["core_score"] == "0.000000"
     assert rows[1]["expanded_score"] == "0.356207"
+
+
+def test_export_rankings_csv_sorts_by_final_score_when_available(tmp_path):
+    scores = InfluenceScores(
+        paper_scores={"p1": 10.0, "p2": 1.0},
+        author_scores={},
+        institution_scores={},
+        field_scores={},
+        year_scores={},
+        paper_score_details={
+            "p1": {"core_score": 10.0, "expanded_score": 10.0, "final_score": 20.0},
+            "p2": {"core_score": 1.0, "expanded_score": 1.0, "final_score": 90.0},
+        },
+    )
+
+    export_rankings_csv(scores, tmp_path)
+
+    with (tmp_path / "papers.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert [row["id"] for row in rows] == ["p2", "p1"]
+    assert rows[0]["score"] == "1.000000"
+    assert rows[0]["final_score"] == "90.000000"
 
 
 def test_export_human_audit_sample_writes_selected_references_with_metadata(tmp_path):

@@ -8,6 +8,7 @@ torch = pytest.importorskip("torch")
 from local_impact_ranking.dpo_lora_train import (
     dpo_loss,
     load_preference_examples,
+    load_preference_examples_with_report,
     tokenize_prompt_response,
 )
 
@@ -41,6 +42,98 @@ def test_load_preference_examples_reads_sharegpt_dpo_jsonl(tmp_path):
     assert examples[0].chosen == "r1"
     assert examples[0].rejected == "r2"
     assert examples[0].target_paper_id == "p1"
+
+
+def test_load_preference_examples_filters_invalid_and_reverse_conflicting_pairs(tmp_path):
+    dataset = tmp_path / "preferences.jsonl"
+    records = [
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r1"},
+            "rejected": {"from": "gpt", "value": "r2"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r2"},
+            "rejected": {"from": "gpt", "value": "r1"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r3"},
+            "rejected": {"from": "gpt", "value": "r3"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [],
+            "chosen": {"from": "gpt", "value": "r4"},
+            "rejected": {"from": "gpt", "value": "r5"},
+            "target_paper_id": "p2",
+        },
+    ]
+    dataset.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    examples = load_preference_examples([dataset], limit=10)
+
+    assert [(example.chosen, example.rejected) for example in examples] == [("r1", "r2")]
+
+
+def test_load_preference_examples_with_report_counts_filtered_records(tmp_path):
+    dataset = tmp_path / "preferences.jsonl"
+    records = [
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r1"},
+            "rejected": {"from": "gpt", "value": "r2"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r1"},
+            "rejected": {"from": "gpt", "value": "r2"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r2"},
+            "rejected": {"from": "gpt", "value": "r1"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [{"from": "human", "value": "Prompt"}],
+            "chosen": {"from": "gpt", "value": "r3"},
+            "rejected": {"from": "gpt", "value": "r3"},
+            "target_paper_id": "p1",
+        },
+        {
+            "conversations": [],
+            "chosen": {"from": "gpt", "value": "r4"},
+            "rejected": {"from": "gpt", "value": "r5"},
+            "target_paper_id": "p2",
+        },
+    ]
+    dataset.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    loaded = load_preference_examples_with_report([dataset], limit=10)
+
+    assert [(example.chosen, example.rejected) for example in loaded.examples] == [
+        ("r1", "r2")
+    ]
+    assert loaded.report == {
+        "raw_record_count": 5,
+        "loaded_example_count": 1,
+        "invalid_record_count": 2,
+        "duplicate_pair_count": 1,
+        "reverse_conflict_count": 1,
+        "limit": 10,
+    }
 
 
 def test_tokenize_prompt_response_masks_prompt_tokens_and_keeps_response_labels():

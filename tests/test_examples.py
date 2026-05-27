@@ -36,6 +36,13 @@ def test_context_example_demonstrates_context_weighted_score(tmp_path):
             "score": "1.500000",
             "core_score": "1.000000",
             "expanded_score": "1.500000",
+            "context_score": "0.500000",
+            "graph_score": "0.000000",
+            "field_year_percentile": "0.000000",
+            "max_single_edge_share": "1.000000",
+            "final_score": "85.000000",
+            "confidence_flag": "stable",
+            "confidence_reason": "context or graph support present",
             "normalized_score": "100.000000",
             "percentile": "100.000000",
         }

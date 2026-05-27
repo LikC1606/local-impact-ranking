@@ -24,30 +24,110 @@ class PreferenceExample:
     target_paper_id: str | None = None
 
 
+@dataclass(frozen=True)
+class PreferenceLoadResult:
+    examples: list[PreferenceExample]
+    report: dict[str, int | None]
+
+
 def load_preference_examples(
     paths: list[str | Path],
     *,
     limit: int | None = None,
 ) -> list[PreferenceExample]:
+    return load_preference_examples_with_report(paths, limit=limit).examples
+
+
+def load_preference_examples_with_report(
+    paths: list[str | Path],
+    *,
+    limit: int | None = None,
+) -> PreferenceLoadResult:
     examples: list[PreferenceExample] = []
+    raw_record_count = 0
+    invalid_record_count = 0
+    duplicate_pair_count = 0
+    reverse_conflict_count = 0
+    seen_oriented_pairs: set[tuple[str | None, str, str]] = set()
+    seen_unordered_pairs: set[tuple[str | None, frozenset[str]]] = set()
     for path in paths:
         with Path(path).open("r", encoding="utf-8") as handle:
             for line in handle:
                 stripped = line.strip()
                 if not stripped:
                     continue
+                raw_record_count += 1
                 record = json.loads(stripped)
-                examples.append(
-                    PreferenceExample(
-                        prompt=str(record["conversations"][0]["value"]),
-                        chosen=str(record["chosen"]["value"]),
-                        rejected=str(record["rejected"]["value"]),
-                        target_paper_id=record.get("target_paper_id"),
-                    )
+                example = _preference_example_from_record(record)
+                if example is None:
+                    invalid_record_count += 1
+                    continue
+                oriented_pair = (
+                    example.target_paper_id,
+                    example.chosen,
+                    example.rejected,
                 )
+                unordered_pair = (
+                    example.target_paper_id,
+                    frozenset({example.chosen, example.rejected}),
+                )
+                if oriented_pair in seen_oriented_pairs:
+                    duplicate_pair_count += 1
+                    continue
+                if unordered_pair in seen_unordered_pairs:
+                    reverse_conflict_count += 1
+                    continue
+                seen_oriented_pairs.add(oriented_pair)
+                seen_unordered_pairs.add(unordered_pair)
+                examples.append(example)
                 if limit is not None and len(examples) >= limit:
-                    return examples
-    return examples
+                    return PreferenceLoadResult(
+                        examples=examples,
+                        report={
+                            "raw_record_count": raw_record_count,
+                            "loaded_example_count": len(examples),
+                            "invalid_record_count": invalid_record_count,
+                            "duplicate_pair_count": duplicate_pair_count,
+                            "reverse_conflict_count": reverse_conflict_count,
+                            "limit": limit,
+                        },
+                    )
+    return PreferenceLoadResult(
+        examples=examples,
+        report={
+            "raw_record_count": raw_record_count,
+            "loaded_example_count": len(examples),
+            "invalid_record_count": invalid_record_count,
+            "duplicate_pair_count": duplicate_pair_count,
+            "reverse_conflict_count": reverse_conflict_count,
+            "limit": limit,
+        },
+    )
+
+
+def _preference_example_from_record(record: dict[str, Any]) -> PreferenceExample | None:
+    conversations = record.get("conversations")
+    if not isinstance(conversations, list) or not conversations:
+        return None
+    first_message = conversations[0]
+    if not isinstance(first_message, dict):
+        return None
+    prompt = first_message.get("value")
+    chosen = record.get("chosen", {}).get("value")
+    rejected = record.get("rejected", {}).get("value")
+    if not isinstance(prompt, str) or not isinstance(chosen, str) or not isinstance(rejected, str):
+        return None
+    if not prompt.strip() or not chosen.strip() or not rejected.strip():
+        return None
+    if chosen == rejected:
+        return None
+    target_paper_id = record.get("target_paper_id")
+    return PreferenceExample(
+        prompt=prompt,
+        chosen=chosen,
+        rejected=rejected,
+        target_paper_id=str(target_paper_id) if target_paper_id is not None else None,
+    )
 
 
 def tokenize_prompt_response(
@@ -150,7 +230,11 @@ def run_dpo_lora_training(
     torch.manual_seed(seed)
     random.seed(seed)
     output_dir.mkdir(parents=True, exist_ok=True)
-    examples = load_preference_examples(train_files, limit=max_examples)
+    loaded_preferences = load_preference_examples_with_report(
+        train_files,
+        limit=max_examples,
+    )
+    examples = loaded_preferences.examples
     if not examples:
         raise ValueError("No preference examples loaded.")
     random.shuffle(examples)
@@ -184,6 +268,7 @@ def run_dpo_lora_training(
         "model_name_or_path": model_name_or_path,
         "train_files": [str(path) for path in train_files],
         "example_count": len(examples),
+        "preference_load_report": loaded_preferences.report,
         "max_steps": max_steps,
         "max_examples": max_examples,
         "max_length": max_length,

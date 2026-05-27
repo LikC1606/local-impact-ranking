@@ -89,3 +89,23 @@ def test_summarize_baseline_comparison_reports_overlap_with_llm_scores():
     assert summary["top_n"] == 2
     assert summary["baselines"]["citation_count"]["top_n_overlap"] == 1
     assert summary["baselines"]["pagerank"]["top_n_overlap"] == 1
+
+
+def test_summarize_baseline_comparison_reports_final_score_rank_alignment():
+    baselines = compute_bibliometric_baselines(sample_papers())
+
+    summary = summarize_baseline_comparison(
+        llm_scores={"p3": 2.0, "p1": 1.0},
+        baselines=baselines,
+        final_scores={"p1": 90.0, "p2": 50.0, "p3": 10.0},
+        top_n=2,
+    )
+
+    citation_count = summary["baselines"]["citation_count"]
+    assert citation_count["raw_top_n_overlap"] == 1
+    assert citation_count["final_top_n_overlap"] == 2
+    assert citation_count["final_spearman"] == 1.0
+    assert citation_count["final_kendall_tau"] == 1.0
+    pagerank = summary["baselines"]["pagerank"]
+    assert pagerank["final_spearman"] < 0
+    assert pagerank["final_kendall_tau"] < 0

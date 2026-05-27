@@ -70,6 +70,25 @@ def test_convert_prescience_file_builds_candidates_and_positive_metadata(tmp_pat
     assert papers[0].metadata["source_benchmark"] == "prescience"
     assert papers[0].metadata["prescience_positive_reference_ids"] == ["ref-positive"]
     assert papers[0].metadata["prescience_key_reference_citations"]["ref-positive"] == 9
+    assert papers[0].metadata["candidate_ordering"] == "deterministic_shuffle"
+    assert papers[0].metadata["candidate_shuffle_seed"] == 13
+
+
+def test_convert_prescience_file_shuffles_candidates_deterministically(tmp_path):
+    source = tmp_path / "prescience.jsonl"
+    output_a = tmp_path / "papers-a.jsonl"
+    output_b = tmp_path / "papers-b.jsonl"
+    write_prescience_fixture(source)
+
+    convert_prescience_file(source, output_a, max_candidates=10, shuffle_seed=7)
+    convert_prescience_file(source, output_b, max_candidates=10, shuffle_seed=7)
+
+    paper_a = load_papers_jsonl(output_a)[0]
+    paper_b = load_papers_jsonl(output_b)[0]
+    ids_a = [reference.reference_id for reference in paper_a.references]
+    ids_b = [reference.reference_id for reference in paper_b.references]
+    assert ids_a == ids_b
+    assert ids_a == ["ref-negative", "ref-positive"]
 
 
 def test_cli_benchmarks_convert_prescience_writes_local_schema(tmp_path):

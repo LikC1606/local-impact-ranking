@@ -24,7 +24,12 @@ from local_impact_ranking.benchmark_status import (
     benchmark_status_report,
     render_benchmark_status_markdown,
 )
-from local_impact_ranking.benchmarks import get_benchmark, list_benchmarks
+from local_impact_ranking.benchmarks import (
+    benchmark_plan,
+    get_benchmark,
+    list_benchmarks,
+    render_benchmark_plan_markdown,
+)
 from local_impact_ranking.baselines import (
     compute_bibliometric_baselines,
     export_baseline_rankings,
@@ -39,7 +44,9 @@ from local_impact_ranking.error_analysis import (
 )
 from local_impact_ranking.explanations import (
     entity_influence_explanations,
+    export_paper_evidence_csv,
     paper_influence_explanations,
+    paper_evidence_report,
 )
 from local_impact_ranking.export import (
     export_human_audit_sample,
@@ -47,9 +54,16 @@ from local_impact_ranking.export import (
     export_scoring_edges_csv,
 )
 from local_impact_ranking.finetune_export import export_finetuning_datasets
-from local_impact_ranking.dpo_lora_train import run_dpo_lora_training
+from local_impact_ranking.dpo_lora_train import (
+    load_preference_examples_with_report,
+    run_dpo_lora_training,
+)
 from local_impact_ranking.gold_evaluation import (
     evaluate_gold_reference_selection,
+    gold_baseline_comparison_report,
+    gold_candidate_position_report,
+    render_gold_baseline_comparison_markdown,
+    render_gold_candidate_position_markdown,
     render_gold_evaluation_markdown,
 )
 from local_impact_ranking.io import convert_papers_csv_to_jsonl, load_papers_jsonl
@@ -65,11 +79,27 @@ from local_impact_ranking.llamafactory_export import export_llamafactory_configs
 from local_impact_ranking.manifest import build_run_manifest, sha256_file
 from local_impact_ranking.normalize import normalize_paper
 from local_impact_ranking.proxy_evaluation import evaluate_proxy_quality
-from local_impact_ranking.scoring import scoring_edges, score_influence, scoring_config
+from local_impact_ranking.project_readiness import (
+    render_project_readiness_markdown,
+    write_project_readiness_report,
+)
+from local_impact_ranking.report_bundle import write_report_bundle
+from local_impact_ranking.scoring import (
+    add_fused_paper_scores,
+    scoring_edges,
+    score_influence,
+    scoring_config,
+)
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
 from local_impact_ranking.prescience_adapter import convert_prescience_file
 from local_impact_ranking.splits import write_paper_splits
-from local_impact_ranking.stability import stability_report
+from local_impact_ranking.stability import (
+    bootstrap_paper_score_report,
+    export_bootstrap_paper_score_csv,
+    export_paper_stability_csv,
+    paper_stability_report,
+    stability_report,
+)
 from local_impact_ranking.summary import (
     benchmark_summary_report,
     mvp_summary_report,
@@ -189,6 +219,54 @@ def train_dpo(
     typer.echo(f"Wrote DPO adapter to {output}")
 
 
+@app.command("validate-dpo-data")
+def validate_dpo_data(
+    train_file: list[Path] = typer.Option(
+        ...,
+        "--train-file",
+        exists=True,
+        readable=True,
+    ),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+) -> None:
+    loaded = load_preference_examples_with_report(train_file, limit=max_examples)
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "dpo_data_validation.json").write_text(
+            json.dumps(loaded.report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    typer.echo(
+        "DPO data validation: "
+        f"raw={loaded.report['raw_record_count']} "
+        f"loaded={loaded.report['loaded_example_count']} "
+        f"invalid={loaded.report['invalid_record_count']} "
+        f"duplicates={loaded.report['duplicate_pair_count']} "
+        f"reverse_conflicts={loaded.report['reverse_conflict_count']}"
+    )
+
+
+@app.command("finetuning-preflight")
+def finetuning_preflight(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+) -> None:
+    finetuning_dir = run_dir / "finetuning"
+    readiness_path = finetuning_dir / "finetuning_readiness.json"
+    dpo_path = finetuning_dir / "merged_dpo_preferences.jsonl"
+    if not readiness_path.exists():
+        raise typer.BadParameter(f"Missing {readiness_path}")
+    if not dpo_path.exists():
+        raise typer.BadParameter(f"Missing {dpo_path}")
+
+    report = _write_finetuning_preflight(finetuning_dir)
+    typer.echo(
+        "Finetuning preflight: "
+        f"recommended={report['decision']['recommended_next_step']} "
+        f"can_start_dpo_smoke={report['decision']['can_start_dpo_smoke']}"
+    )
+
+
 @app.command("compare-benchmarks")
 def compare_benchmarks(
     run_dirs: list[Path] = typer.Argument(..., exists=True, file_okay=False, readable=True),
@@ -232,6 +310,28 @@ def benchmark_status(
         typer.echo(render_benchmark_status_markdown(report))
     else:
         typer.echo(json.dumps(report, indent=2))
+
+
+@app.command("project-readiness")
+def project_readiness(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    markdown: bool = typer.Option(False, "--markdown/--json"),
+) -> None:
+    report = _write_project_readiness_with_artifact_index(run_dir)
+    if markdown:
+        typer.echo(render_project_readiness_markdown(report))
+    else:
+        typer.echo(json.dumps(report, indent=2))
+
+
+@app.command("report-bundle")
+def report_bundle(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    _write_project_readiness_with_artifact_index(run_dir)
+    write_report_bundle(run_dir, output)
+    typer.echo(f"Wrote report bundle to {output}")
 
 
 @app.command("analyze-gold-errors")
@@ -278,7 +378,10 @@ def analyze_gold_errors(
 @benchmarks_app.command("list")
 def benchmarks_list() -> None:
     for spec in list_benchmarks():
-        typer.echo(f"{spec.name} - {spec.purpose}")
+        typer.echo(
+            f"{spec.recommended_order}. {spec.name} "
+            f"[{spec.implementation_status}] - {spec.purpose}"
+        )
 
 
 @benchmarks_app.command("show")
@@ -287,15 +390,33 @@ def benchmarks_show(name: str = typer.Argument(...)) -> None:
     typer.echo(
         json.dumps(
             {
+                "key": spec.key,
                 "name": spec.name,
                 "purpose": spec.purpose,
                 "pipeline_layers": list(spec.pipeline_layers),
                 "preferred_input": spec.preferred_input,
                 "notes": spec.notes,
+                "source_url": spec.source_url,
+                "paper_url": spec.paper_url,
+                "implementation_status": spec.implementation_status,
+                "recommended_order": spec.recommended_order,
+                "evaluation_metrics": list(spec.evaluation_metrics),
+                "evaluation_role": spec.evaluation_role,
+                "local_command": spec.local_command,
+                "transfer_risk": spec.transfer_risk,
             },
             indent=2,
         )
     )
+
+
+@benchmarks_app.command("plan")
+def benchmarks_plan(markdown: bool = typer.Option(False, "--markdown/--json")) -> None:
+    plan = benchmark_plan()
+    if markdown:
+        typer.echo(render_benchmark_plan_markdown(plan))
+    else:
+        typer.echo(json.dumps(plan, indent=2))
 
 
 @benchmarks_app.command("convert-scicite")
@@ -313,12 +434,14 @@ def benchmarks_convert_prescience(
     output: Path = typer.Option(..., "--output", "-o"),
     limit: int | None = typer.Option(None, "--limit", min=1),
     max_candidates: int = typer.Option(50, "--max-candidates", min=1),
+    shuffle_seed: int = typer.Option(13, "--shuffle-seed"),
 ) -> None:
     count = convert_prescience_file(
         input,
         output,
         limit=limit,
         max_candidates=max_candidates,
+        shuffle_seed=shuffle_seed,
     )
     typer.echo(f"Wrote {count} converted papers to {output}")
 
@@ -446,7 +569,7 @@ def run(
             json_mode=json_mode,
         )
         judge_results = [judge.judge(paper, top_k=top_k) for paper in papers]
-    scores = score_influence(papers, judge_results, credit_mode=credit_mode)
+    raw_scores = score_influence(papers, judge_results, credit_mode=credit_mode)
 
     rankings_dir = output / "rankings"
     baselines_dir = output / "baselines"
@@ -459,8 +582,13 @@ def run(
     review_dir.mkdir(parents=True, exist_ok=True)
     finetuning_dir.mkdir(parents=True, exist_ok=True)
 
-    export_rankings_csv(scores, rankings_dir)
     baselines = compute_bibliometric_baselines(papers)
+    scores = add_fused_paper_scores(
+        raw_scores,
+        graph_scores=baselines.pagerank,
+        paper_metadata=_paper_metadata_index(papers),
+    )
+    export_rankings_csv(scores, rankings_dir)
     export_baseline_rankings(baselines, baselines_dir)
     export_human_audit_sample(papers, judge_results, review_dir / "human_audit_sample.csv")
     _write_judge_audit(judge_results, audit_dir / "judge_outputs.jsonl")
@@ -471,10 +599,21 @@ def run(
     )
     evaluation_report = evaluate_judge_results(judge_results, top_k=top_k)
     gold_report = evaluate_gold_reference_selection(papers, judge_results, top_k=top_k)
+    gold_position_report = gold_candidate_position_report(papers)
+    gold_baseline_report = gold_baseline_comparison_report(
+        papers,
+        judge_results,
+        top_k=top_k,
+    )
     current_scoring_config = scoring_config(credit_mode)
     context_report = context_coverage_report(papers)
     readiness_report = data_readiness_report(papers)
-    baseline_report = summarize_baseline_comparison(scores.paper_scores, baselines, top_n=100)
+    baseline_report = summarize_baseline_comparison(
+        scores.paper_scores,
+        baselines,
+        final_scores=_paper_detail_scores(scores.paper_score_details, "final_score"),
+        top_n=100,
+    )
     proxy_report = evaluate_proxy_quality(papers, judge_results, baselines, top_n=100)
     current_anomaly_report = anomaly_report(
         papers,
@@ -487,6 +626,20 @@ def run(
         judge_results,
         primary_credit_mode=credit_mode,
         top_n=100,
+    )
+    current_paper_stability_report = paper_stability_report(
+        papers,
+        judge_results,
+        credit_mode=credit_mode,
+        top_n=100,
+    )
+    current_paper_score_uncertainty_report = bootstrap_paper_score_report(
+        papers,
+        judge_results,
+        credit_mode=credit_mode,
+        top_n=100,
+        samples=200,
+        seed=13,
     )
     paper_explanations_report = paper_influence_explanations(
         papers,
@@ -502,6 +655,15 @@ def run(
         top_n=20,
         max_edges_per_entity=5,
     )
+    current_paper_evidence_report = paper_evidence_report(
+        papers,
+        judge_results,
+        paper_score_details=scores.paper_score_details,
+        paper_score_uncertainty=current_paper_score_uncertainty_report,
+        credit_mode=credit_mode,
+        top_n=100,
+        max_edges_per_paper=5,
+    )
     current_mvp_summary = mvp_summary_report(
         data_readiness=readiness_report,
         evaluation=evaluation_report,
@@ -509,6 +671,9 @@ def run(
         anomaly=current_anomaly_report,
         stability=current_stability_report,
         scoring_config=current_scoring_config,
+        paper_stability=current_paper_stability_report,
+        paper_score_uncertainty=current_paper_score_uncertainty_report,
+        context_coverage=context_report,
         ranking_preview=ranking_preview_from_scores(
             paper_scores=scores.paper_scores,
             author_scores=scores.author_scores,
@@ -521,6 +686,7 @@ def run(
     current_benchmark_summary = benchmark_summary_report(
         evaluation=evaluation_report,
         gold_evaluation=gold_report,
+        gold_baseline_comparison=gold_baseline_report,
         data_readiness=readiness_report,
         scoring_config=current_scoring_config,
     )
@@ -538,6 +704,22 @@ def run(
     )
     (reports_dir / "gold_evaluation.md").write_text(
         render_gold_evaluation_markdown(gold_report),
+        encoding="utf-8",
+    )
+    (reports_dir / "gold_candidate_position.json").write_text(
+        json.dumps(gold_position_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (reports_dir / "gold_candidate_position.md").write_text(
+        render_gold_candidate_position_markdown(gold_position_report),
+        encoding="utf-8",
+    )
+    (reports_dir / "gold_baseline_comparison.json").write_text(
+        json.dumps(gold_baseline_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (reports_dir / "gold_baseline_comparison.md").write_text(
+        render_gold_baseline_comparison_markdown(gold_baseline_report),
         encoding="utf-8",
     )
     (reports_dir / "scoring_config.json").write_text(
@@ -569,6 +751,22 @@ def run(
         json.dumps(current_stability_report, indent=2) + "\n",
         encoding="utf-8",
     )
+    (reports_dir / "paper_stability_report.json").write_text(
+        json.dumps(current_paper_stability_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    export_paper_stability_csv(
+        current_paper_stability_report,
+        reports_dir / "paper_stability_report.csv",
+    )
+    (reports_dir / "paper_score_uncertainty_report.json").write_text(
+        json.dumps(current_paper_score_uncertainty_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    export_bootstrap_paper_score_csv(
+        current_paper_score_uncertainty_report,
+        reports_dir / "paper_score_uncertainty_report.csv",
+    )
     (reports_dir / "paper_explanations.json").write_text(
         json.dumps(paper_explanations_report, indent=2) + "\n",
         encoding="utf-8",
@@ -576,6 +774,14 @@ def run(
     (reports_dir / "entity_explanations.json").write_text(
         json.dumps(entity_explanations_report, indent=2) + "\n",
         encoding="utf-8",
+    )
+    (reports_dir / "paper_evidence_report.json").write_text(
+        json.dumps(current_paper_evidence_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    export_paper_evidence_csv(
+        current_paper_evidence_report,
+        reports_dir / "paper_evidence_report.csv",
     )
     (reports_dir / "mvp_summary.json").write_text(
         json.dumps(current_mvp_summary, indent=2) + "\n",
@@ -601,6 +807,7 @@ def run(
         top_k=top_k,
         gold_report=gold_report,
     )
+    _write_finetuning_preflight(finetuning_dir)
     export_llamafactory_configs(
         finetuning_dir,
         model_name_or_path=model or "local-impact-judge",
@@ -630,10 +837,7 @@ def run(
         + "\n",
         encoding="utf-8",
     )
-    (reports_dir / "artifact_index.json").write_text(
-        json.dumps(artifact_index(output, RUN_ARTIFACTS), indent=2) + "\n",
-        encoding="utf-8",
-    )
+    _write_project_readiness_with_artifact_index(output)
     typer.echo(f"Wrote run outputs to {output}")
 
 
@@ -707,6 +911,119 @@ def _write_validation_outputs(report: dict, reports_dir: Path) -> None:
     )
 
 
+def _write_project_readiness_with_artifact_index(run_dir: Path) -> dict:
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    _write_artifact_index(run_dir)
+    report = write_project_readiness_report(run_dir)
+    _write_artifact_index(run_dir)
+    report = write_project_readiness_report(run_dir)
+    _write_artifact_index(run_dir)
+    return report
+
+
+def _write_artifact_index(run_dir: Path) -> None:
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "artifact_index.json").write_text(
+        json.dumps(artifact_index(run_dir, RUN_ARTIFACTS), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_finetuning_preflight(finetuning_dir: Path) -> dict:
+    readiness_path = finetuning_dir / "finetuning_readiness.json"
+    dpo_path = finetuning_dir / "merged_dpo_preferences.jsonl"
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    loaded = load_preference_examples_with_report([dpo_path])
+    report = _finetuning_preflight_report(readiness, loaded.report)
+    (finetuning_dir / "finetuning_preflight.json").write_text(
+        json.dumps(report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (finetuning_dir / "finetuning_preflight.md").write_text(
+        _render_finetuning_preflight_markdown(report),
+        encoding="utf-8",
+    )
+    return report
+
+
+def _finetuning_preflight_report(
+    readiness: dict,
+    dpo_data_validation: dict,
+) -> dict:
+    readiness_gates = readiness.get("readiness", {})
+    recommendation = readiness.get("recommendation", {})
+    recommended_next_step = recommendation.get("next_step", "collect_more_examples")
+    can_start_dpo_smoke = (
+        recommended_next_step in {"dpo_smoke", "dpo_train"}
+        and bool(readiness_gates.get("ready_for_dpo_smoke"))
+        and not bool(readiness_gates.get("has_training_data_quality_blockers"))
+        and dpo_data_validation.get("loaded_example_count", 0) >= 10
+        and dpo_data_validation.get("invalid_record_count", 0) == 0
+        and dpo_data_validation.get("reverse_conflict_count", 0) == 0
+    )
+    can_start_sft_smoke = (
+        recommended_next_step in {"sft_smoke", "dpo_smoke", "dpo_train"}
+        and bool(readiness_gates.get("ready_for_sft_smoke"))
+        and not bool(readiness_gates.get("has_training_data_quality_blockers"))
+    )
+    return {
+        "readiness_summary": readiness.get("summary", {}),
+        "readiness_gates": readiness_gates,
+        "readiness_recommendation": recommendation,
+        "dpo_data_validation": dpo_data_validation,
+        "decision": {
+            "recommended_next_step": recommended_next_step,
+            "can_start_sft_smoke": can_start_sft_smoke,
+            "can_start_dpo_smoke": can_start_dpo_smoke,
+            "can_start_full_dpo": (
+                can_start_dpo_smoke
+                and bool(readiness_gates.get("ready_for_full_dpo"))
+            ),
+        },
+        "limitations": [
+            "This preflight checks training data readiness only; it does not evaluate model quality.",
+            "Run dev-set model comparison before promoting a trained adapter to test or production.",
+        ],
+    }
+
+
+def _render_finetuning_preflight_markdown(report: dict) -> str:
+    decision = report.get("decision", {})
+    validation = report.get("dpo_data_validation", {})
+    recommendation = report.get("readiness_recommendation", {})
+    lines = [
+        "# Finetuning Preflight",
+        "",
+        "## Decision",
+        "",
+        "| Item | Value |",
+        "| --- | --- |",
+        f"| recommended_next_step | {decision.get('recommended_next_step', '')} |",
+        f"| can_start_sft_smoke | {_yes_no_bool(decision.get('can_start_sft_smoke'))} |",
+        f"| can_start_dpo_smoke | {_yes_no_bool(decision.get('can_start_dpo_smoke'))} |",
+        f"| can_start_full_dpo | {_yes_no_bool(decision.get('can_start_full_dpo'))} |",
+        f"| reason | {recommendation.get('reason', '')} |",
+        "",
+        "## DPO Data Validation",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| raw_record_count | {validation.get('raw_record_count', 0)} |",
+        f"| loaded_example_count | {validation.get('loaded_example_count', 0)} |",
+        f"| invalid_record_count | {validation.get('invalid_record_count', 0)} |",
+        f"| duplicate_pair_count | {validation.get('duplicate_pair_count', 0)} |",
+        f"| reverse_conflict_count | {validation.get('reverse_conflict_count', 0)} |",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _yes_no_bool(value: object) -> str:
+    return "yes" if bool(value) else "no"
+
+
 def _serving_backend_name(judge_name: str) -> str | None:
     if judge_name == "openai-compatible":
         return "openai-compatible"
@@ -754,6 +1071,37 @@ def _write_judge_audit(results: list[JudgeResult], path: Path) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for result in results:
             handle.write(json.dumps(judge_result_to_record(result)) + "\n")
+
+
+def _paper_metadata_index(papers) -> dict[str, dict[str, object]]:
+    metadata: dict[str, dict[str, object]] = {}
+    for paper in papers:
+        metadata[paper.paper_id] = {"field": paper.field, "year": paper.year}
+        for reference in paper.references:
+            if reference.reference_id:
+                metadata[reference.reference_id] = {
+                    "field": reference.field,
+                    "year": reference.year,
+                }
+    return metadata
+
+
+def _paper_detail_scores(
+    paper_score_details: dict[str, dict[str, object]] | None,
+    field: str,
+) -> dict[str, float]:
+    if not paper_score_details:
+        return {}
+    scores: dict[str, float] = {}
+    for identifier, details in paper_score_details.items():
+        value = details.get(field)
+        if value is None:
+            continue
+        try:
+            scores[identifier] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return scores
 
 
 if __name__ == "__main__":

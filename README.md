@@ -14,6 +14,8 @@ It intentionally does not include local datasets, downloaded model weights, or g
 
 The core package and CI test suite do not require GPU libraries. Local LLM serving and DPO LoRA training require a separate machine environment with model weights and training dependencies such as `torch`, `transformers`, `peft`, and `vllm`.
 
+Before publishing or pushing to GitHub, run the checks in [docs/publish-checklist.md](docs/publish-checklist.md).
+
 ## Install
 
 ```bash
@@ -82,14 +84,22 @@ PYTHONPATH=src python -m local_impact_ranking.cli run \
   --base-url http://localhost:8000/v1 \
   --model local-impact-judge
 
+PYTHONPATH=src python -m local_impact_ranking.cli validate-dpo-data \
+  --train-file runs/my-dataset-train/finetuning/merged_dpo_preferences.jsonl \
+  --output runs/my-dataset-train/finetuning
+
+PYTHONPATH=src python -m local_impact_ranking.cli finetuning-preflight \
+  runs/my-dataset-train
+
 PYTHONPATH=src python -m local_impact_ranking.cli train-dpo \
   --model models/deepseek-r1-distill-qwen-32b \
-  --train-file runs/my-dataset-train/finetuning/dpo_preferences.jsonl \
-  --train-file runs/my-dataset-train/finetuning/gold_hard_negative_dpo.jsonl \
+  --train-file runs/my-dataset-train/finetuning/merged_dpo_preferences.jsonl \
   --output runs/my-dataset-train/checkpoints/dpo
 ```
 
 After training, serve the adapter or merged model separately and compare it against the base judge on `dev.papers.jsonl`. Only use `test.papers.jsonl` for the final reported comparison.
+
+Each run also writes `finetuning/context_hard_negative_dpo.jsonl`, `finetuning/method_context_contrastive_dpo.jsonl`, `finetuning/merged_dpo_preferences.jsonl`, `finetuning/finetuning_readiness.json`, `finetuning/finetuning_readiness.md`, `finetuning/finetuning_preflight.json`, and `finetuning/finetuning_preflight.md`. Context hard negatives prefer references with citation-context evidence over selected references without context support. Method-context contrastive examples prefer method/data/baseline-context references over no-context references from the same target paper. `merged_dpo_preferences.jsonl` deduplicates all DPO sources, drops reversed pair conflicts and self-pairs, and caps pairs per target to reduce target-level overfitting; use it as the default DPO training file. Check readiness before training: it reports raw and effective SFT/DPO counts, SFT parse and empty-selection quality, DPO invalid-pair and reverse-conflict quality, target concentration, and recommends `collect_more_examples`, `sft_smoke`, `dpo_smoke`, or `dpo_train`. The preflight report combines readiness gates with DPO JSONL validation and says whether SFT smoke, DPO smoke, or full DPO can start without using GPU.
 
 ```bash
 BASE_MODEL=local-impact-judge \
@@ -100,7 +110,7 @@ LIMIT=150 TOP_K=5 \
   runs/my-dataset-dev-comparison
 ```
 
-The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, `target_changes.csv`, `model_selection_decision.json`, and `model_selection_decision.md`. The default decision rule recommends moving to test only when dev has common labeled targets, positive `net_hit_change`, non-negative `mean_ndcg_delta`, and `broken_count / common_targets <= 0.05`. Run the same command on `test.papers.jsonl` once for the final report only after dev says `promote_to_test`.
+The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, `target_changes.csv`, `model_selection_decision.json`, and `model_selection_decision.md`. The default decision rule recommends moving to test only when dev has common labeled targets, positive `net_hit_change`, non-negative `mean_ndcg_delta`, `broken_count / common_targets <= 0.05`, and, when candidate `benchmark_summary.json` is available, both `judge_beats_all_baselines=true` and `statistically_positive_ndcg_delta=true`. Run the same command on `test.papers.jsonl` once for the final report only after dev says `promote_to_test`.
 
 ## Public Benchmarks
 
@@ -109,9 +119,11 @@ When you do not have a private dataset yet, list candidate public benchmarks and
 ```bash
 PYTHONPATH=src python -m local_impact_ranking.cli benchmarks list
 PYTHONPATH=src python -m local_impact_ranking.cli benchmarks show prescience
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan --markdown
 ```
 
-The current registry covers PreScience, SCIDOCA 2025, SciCite/ACL-ARC/MultiCite, SciImpact, and BIP! DB/OpenCitations. See [docs/planning/benchmark-mapping.md](docs/planning/benchmark-mapping.md) for the mapping plan.
+The current registry covers PreScience, SCIDOCA 2025, SciCite/ACL-ARC/MultiCite, SciImpact, and BIP! DB/OpenCitations. `benchmarks plan` prints `recommended_order`, `ready_now`, metrics, source URLs, transfer risks, and local commands. See [docs/planning/benchmark-mapping.md](docs/planning/benchmark-mapping.md) for the mapping plan.
 
 Convert a locally downloaded PreScience JSONL or Parquet shard into the local paper schema:
 
@@ -120,10 +132,11 @@ PYTHONPATH=src python -m local_impact_ranking.cli benchmarks convert-prescience 
   --input data/prescience/train-00000-of-00001.parquet \
   --output data/prescience/papers.jsonl \
   --limit 100 \
-  --max-candidates 50
+  --max-candidates 50 \
+  --shuffle-seed 13
 ```
 
-The adapter builds each target paper's candidate references from PreScience key references plus author publication history, and stores gold positives in `metadata.prescience_positive_reference_ids`.
+The adapter builds each target paper's candidate references from PreScience key references plus author publication history, stores gold positives in `metadata.prescience_positive_reference_ids`, and deterministically shuffles candidate order by default to reduce gold-position leakage in benchmark runs.
 
 To fetch a bounded PreScience sample through the HuggingFace mirror and run a no-GPU benchmark pilot:
 
@@ -201,7 +214,7 @@ Scoring modes:
 - `context_weighted`: `score_v2_context_weighted`; rank weights are multiplied by citation-context support weights when citation contexts are available.
 - `flat`: every valid selected reference receives one point.
 
-Ranking CSV files include `score`, `core_score`, `expanded_score`, `normalized_score`, and `percentile`. `score` is the raw accumulated dataset-local influence credit, `core_score` is the strict top-5 signal, `expanded_score` uses log-discounted top-20 credit to reduce hard cutoff effects, `normalized_score` rescales the table's top score to 100, and `percentile` reports where the item sits within that ranking table.
+Ranking CSV files include `score`, `core_score`, `expanded_score`, `context_score`, `graph_score`, `field_year_percentile`, `max_single_edge_share`, `final_score`, `confidence_flag`, `confidence_reason`, `normalized_score`, and `percentile`. `score` is the raw accumulated dataset-local influence credit, `core_score` is the strict top-5 signal, `expanded_score` uses log-discounted top-20 credit to reduce hard cutoff effects, `context_score` captures citation-context support, `graph_score` records the local PageRank prior, `field_year_percentile` reports within-field/year standing when metadata is available, `max_single_edge_share` flags scores dominated by one citation edge, `final_score` is the 0-100 fused paper influence score used to sort `papers.csv`, `confidence_flag` labels each paper as `stable`, `fragile`, or `low_evidence`, `normalized_score` rescales the raw score table's top score to 100, and `percentile` reports where the item sits within that ranking table.
 
 For the scoring formulas, aggregation rules, audit artifacts, and limitations, see [docs/scoring-method.md](docs/scoring-method.md).
 
@@ -243,12 +256,24 @@ Outputs:
 - `runs/example/reports/gold_evaluation.json`
 - `runs/example/reports/gold_evaluation.md`
 - `runs/example/reports/stability_report.json`
+- `runs/example/reports/paper_stability_report.json`
+- `runs/example/reports/paper_stability_report.csv`
+- `runs/example/reports/paper_score_uncertainty_report.json`
+- `runs/example/reports/paper_score_uncertainty_report.csv`
 - `runs/example/reports/paper_explanations.json`
 - `runs/example/reports/entity_explanations.json`
+- `runs/example/reports/paper_evidence_report.json`
+- `runs/example/reports/paper_evidence_report.csv`
 - `runs/example/reports/mvp_summary.json`
 - `runs/example/reports/mvp_summary.md`
+- `runs/example/reports/project_readiness.json`
+- `runs/example/reports/project_readiness.md`
 
 `stability_report.json` checks whether the dataset-local paper ranking is sensitive to scoring choices or to one target paper's selections. It reports top-N overlap across scoring modes, rank agreement, and leave-one-target-out retention. This is a robustness signal, not human-validated ground truth.
+
+`paper_stability_report.json` and `paper_stability_report.csv` show per-paper rank sensitivity under leave-one-target-out perturbation. `stability_band` is `stable`, `moderate`, `unstable`, or `insufficient_samples`; use it to spot papers whose influence score is dominated by narrow target coverage.
+
+`paper_score_uncertainty_report.json` and `paper_score_uncertainty_report.csv` use target-level bootstrap resampling to estimate each top paper's local score interval, rank interval, zero-score rate, and uncertainty band. These are confidence diagnostics for the dataset-local score, not proof of true external impact.
 
 `validation.json` and `validation.md` are also written by `run`, so every ranking output carries the same data-quality gate report used by the standalone `validate` command.
 
@@ -256,13 +281,33 @@ Outputs:
 
 `artifact_index.json` lists the key run artifacts, whether each file exists, and its byte size.
 
-`mvp_summary.json` is the machine-readable one-page summary. `mvp_summary.md` is the report-ready Markdown version. They collect claim scope, data readiness, scoring version, top paper/author/institution/field/year previews, judge reliability, proxy quality, anomaly flags, stability, and a conservative larger-pilot readiness flag.
+`mvp_summary.json` is the machine-readable one-page summary. `mvp_summary.md` is the report-ready Markdown version. They collect claim scope, data readiness, scoring version, top paper/author/institution/field/year previews, judge reliability, proxy quality, anomaly flags, run-level stability, per-paper stability counts, bootstrap score-uncertainty counts, and a conservative larger-pilot readiness flag.
+
+`project_readiness.json` and `project_readiness.md` are the final quality-gate reports. They combine artifact completeness, validation, judge reliability, scoring config, ranking scope, gold/proxy evidence, stability, anomaly risk, fine-tuning preflight, and claim boundaries into a single decision: `reportable`, `needs_improvement`, or `blocked`. They also report `evidence_level`: `gold_validated`, `proxy_supported`, `proxy_only_needs_review`, or `no_external_or_proxy_evidence`. The report includes a reproducibility summary from `run_manifest.json`: input hashes, normalized record count, top-k, judge/model, prompt version, scoring version, git revision, and dirty-worktree flag.
+
+You can regenerate or print that decision for an existing run:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli project-readiness runs/example --markdown
+```
+
+Create a compact report bundle for upload or sharing:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli report-bundle \
+  runs/example \
+  --output runs/example/report_bundle
+```
+
+The bundle writes `README.md` and `bundle_manifest.json`, then copies the main report-facing artifacts: paper/entity rankings, `mvp_summary.md`, `benchmark_summary.md`, `project_readiness.md`, evaluation reports, evidence CSVs, `scoring_config.json`, `artifact_index.json`, and `run_manifest.json`.
 
 `evaluation.json` and `evaluation.md` report judge reliability metrics such as parse success, invalid selections, empty selections, duplicate selections, and top-k compliance. They are reliability checks, not human correctness labels.
 
 `gold_evaluation.json` and `gold_evaluation.md` report hit rate, precision, recall, MRR, and NDCG when benchmark gold labels are available, such as PreScience `prescience_positive_reference_ids`.
 
 For evaluation metric definitions, error analysis, benchmark comparison, and target-level comparison, see [docs/evaluation-method.md](docs/evaluation-method.md).
+
+`baseline_comparison.json` compares raw and fused paper impact scores against citation count, PageRank, and field/year-normalized citation baselines. It reports top-N overlap plus Spearman and Kendall alignment for `final_score`.
 
 `audit/judge_outputs.jsonl` stores each judge result with `prompt_sha256` and the candidate `reference_id` list, so model outputs can be traced back to the prompt and candidate set used for that paper.
 
@@ -271,6 +316,8 @@ For evaluation metric definitions, error analysis, benchmark comparison, and tar
 `audit/scoring_edges.csv` is the score ledger. Each row records one valid target-paper to selected-reference edge, including rank, rank weight, context count, context weight, and final credit.
 
 `paper_explanations.json` groups the score ledger by high-ranking referenced paper and lists the top target-paper edges that contributed to each score.
+
+`paper_evidence_report.json` and `paper_evidence_report.csv` combine each scored paper's `final_score`, `confidence_flag`, `support_band`, `max_single_edge_share`, bootstrap score uncertainty (`score_ci_low`, `score_ci_high`, `score_ci_width`, `rank_span`, `zero_score_rate`, `uncertainty_band`), and top contributing citation edges. Use this as the main report-facing paper audit table.
 
 `entity_explanations.json` explains author and institution rankings using the same score ledger, with credit split across reference authors and affiliations.
 
@@ -413,11 +460,22 @@ The script writes:
 - `runs/pilot-100/reports/anomaly_report.json`
 - `runs/pilot-100/reports/scoring_config.json`
 - `runs/pilot-100/reports/stability_report.json`
+- `runs/pilot-100/reports/paper_stability_report.json`
+- `runs/pilot-100/reports/paper_stability_report.csv`
+- `runs/pilot-100/reports/paper_score_uncertainty_report.json`
+- `runs/pilot-100/reports/paper_score_uncertainty_report.csv`
 - `runs/pilot-100/reports/paper_explanations.json`
 - `runs/pilot-100/reports/entity_explanations.json`
 - `runs/pilot-100/reports/mvp_summary.json`
 - `runs/pilot-100/reports/mvp_summary.md`
 - `runs/pilot-100/finetuning/*.jsonl`
+- `runs/pilot-100/finetuning/context_hard_negative_dpo.jsonl`
+- `runs/pilot-100/finetuning/method_context_contrastive_dpo.jsonl`
+- `runs/pilot-100/finetuning/merged_dpo_preferences.jsonl`
+- `runs/pilot-100/finetuning/finetuning_readiness.json`
+- `runs/pilot-100/finetuning/finetuning_readiness.md`
+- `runs/pilot-100/finetuning/finetuning_preflight.json`
+- `runs/pilot-100/finetuning/finetuning_preflight.md`
 - `runs/pilot-100/finetuning/llamafactory_*.yaml`
 - `runs/pilot-100/run_manifest.json`
 

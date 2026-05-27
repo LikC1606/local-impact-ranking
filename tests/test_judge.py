@@ -159,6 +159,42 @@ def test_heuristic_judge_returns_parseable_top_k_json():
     assert result.candidate_reference_ids == ("r1", "r2")
 
 
+def test_heuristic_judge_uses_target_title_when_scoring_references():
+    paper = Paper.model_validate(
+        {
+            "paper_id": "p-title",
+            "title": "Graph Neural Networks",
+            "abstract": "We introduce a scalable training recipe.",
+            "references": [
+                {"reference_id": "r1", "title": "Scalable Training Recipe"},
+                {"reference_id": "r2", "title": "Graph Neural Networks"},
+            ],
+        }
+    )
+
+    result = HeuristicJudge().judge(paper, top_k=1)
+
+    assert result.selected_references[0].reference_id == "r2"
+
+
+def test_heuristic_judge_prefers_specific_terms_over_many_generic_terms():
+    paper = Paper.model_validate(
+        {
+            "paper_id": "p-specific",
+            "title": "Sparse Transformer Retrieval",
+            "abstract": "Sparse retrieval improves matching.",
+            "references": [
+                {"reference_id": "r1", "title": "Retrieval Matching Improves"},
+                {"reference_id": "r2", "title": "Sparse Transformer"},
+            ],
+        }
+    )
+
+    result = HeuristicJudge().judge(paper, top_k=1)
+
+    assert result.selected_references[0].reference_id == "r2"
+
+
 def test_openai_compatible_judge_repairs_malformed_json_output():
     calls = []
 

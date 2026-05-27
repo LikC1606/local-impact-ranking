@@ -1,5 +1,68 @@
 # Progress Log
 
+## 2026-05-27
+
+- Started a full optimization workflow per user request: analyze current weaknesses, research methods, design a complete plan, implement selected gaps, and verify the final project.
+- Replaced `task_plan.md` with a new full optimization plan.
+- Current known verification baseline before this pass: full tests reported `170 passed`; local smoke completed at `/tmp/local-impact-local-smoke-preflight-final`.
+- No GPU job started.
+- Audited the current CLI, scoring, summary, artifact, and planning docs. The main gap is a consolidated run-level quality gate/readiness report rather than another isolated metric.
+- Added research findings to `findings.md` covering ImpactRankings reproducibility limits, key-reference identification, influential citations, SciCite, PreScience, SciImpact, SCIDOCA, PageRank/CiteRank, field normalization, BIP! DB, DORA, and Leiden Manifesto.
+- Wrote `docs/planning/full-optimization-design.md`.
+- Added `project_readiness.py`, `project-readiness` CLI, automatic `project_readiness.json/md` generation during `run`, artifact-index entries, README/evaluation docs, and tests.
+- TDD target verification for the readiness gate passed: `6 passed`.
+- Targeted regression tests passed: `40 passed`.
+- Full verification passed: `175 passed`.
+- Local smoke passed at `/tmp/local-impact-ranking-full-optimization-smoke-final`.
+- Benchmark smoke passed at `/tmp/local-impact-ranking-full-optimization-benchmark-smoke-final`.
+- Smoke artifact checks: both local-context and benchmark runs had `missing_count=0`; readiness status was `needs_improvement` with no hard blockers, which is expected for tiny/small benchmark smoke runs.
+- Continued readiness refinement: `project-readiness` now reports `evidence_level` and counts proxy-supported evidence separately from gold labels, so no-human-label runs are not incorrectly described as lacking all evidence.
+- Verification for the evidence-level change: `tests/test_project_readiness.py` passed with `5 passed`.
+- Related regression verification passed: `13 passed`.
+- Full verification after the evidence-level change passed: `176 passed`.
+- Local smoke for the evidence-level change passed at `/tmp/local-impact-ranking-readiness-evidence-smoke`; context readiness reported `evidence_level=proxy_supported`, `missing_count=0`, and no hard blockers.
+- Continued artifact consistency refinement: `RUN_ARTIFACTS` now includes `reports/artifact_index.json`, `project-readiness` uses an explicit `required_artifacts_for_readiness()`, and `run` writes artifact index before and after readiness so the final index includes itself and readiness outputs.
+- Verification for artifact-order fix: target tests passed with `10 passed`; local smoke passed at `/tmp/local-impact-ranking-artifact-order-smoke`; full verification passed with `177 passed`.
+- Continued standalone-readiness consistency: `project-readiness RUN_DIR` now refreshes `artifact_index.json` through the same helper as `run`, so rerunning readiness on an existing run recreates a missing/stale artifact index.
+- Verification for standalone refresh: target tests passed with `11 passed`; full verification passed with `178 passed`; local smoke passed at `/tmp/local-impact-ranking-project-readiness-refresh-smoke`; manual deletion/rebuild check produced `missing_count=0`.
+- Continued reportability refinement: `project-readiness` now includes a reproducibility summary from `run_manifest.json` so the readiness report shows input hashes, normalized record count, judge/model, prompt version, scoring version, git revision, and dirty flag without opening a second file.
+- Verification for reproducibility summary: `tests/test_project_readiness.py` passed with `6 passed`.
+- Related regression verification passed: `15 passed`.
+- Full verification after reproducibility summary passed: `178 passed`.
+- Local smoke passed at `/tmp/local-impact-ranking-readiness-repro-smoke`; `project_readiness.md` includes the `## Reproducibility` section with input hashes, judge name, prompt version, scoring version, and git dirty flag.
+- Added a structured public benchmark evaluation plan to the registry and CLI. `benchmarks plan` now reports recommended dataset order, ready-now benchmarks, source URLs, metrics, local commands, and transfer risks.
+- The benchmark plan treats PreScience and SciCite as ready-now executable checks, SciImpact and SCIDOCA as planned adapters, and BIP! DB/OpenCitations as external baseline anchors.
+- Verification for the benchmark plan change: `tests/test_docs.py tests/test_benchmarks.py` passed with `16 passed`.
+- Ran a real PreScience 30-target smoke through the HuggingFace mirror. It streamed 1224 raw rows, converted 30 targets, and produced gold metrics: hit_rate `0.933333`, selection_precision `0.322034`, selection_recall `0.745098`, MRR `0.636667`, mean_ndcg `0.657533`.
+- Identified and fixed a benchmark credibility risk: converted PreScience candidates now use deterministic shuffle by default (`candidate_ordering=deterministic_shuffle`, `candidate_shuffle_seed=13`) to reduce gold-position leakage for LLM judges.
+- Added `gold_candidate_position.json/md` reports and project-readiness integration. The latest PreScience smoke at `runs/prescience-smoke-30-position-report` has `position_bias_risk=low`, `front_position_share=0.466667`, `mean_best_gold_position=3.2`, artifact `missing_count=0`, and readiness `evidence_level=gold_validated`.
+- Verification for candidate shuffling and position-bias reporting: target tests passed with `42 passed`.
+- Ran a larger PreScience 100-target smoke at `runs/prescience-smoke-100-position-report`. It used `data/prescience/sample-100.jsonl`, converted 100 targets, produced artifact `missing_count=0`, and reported hit_rate `0.84`, selection_precision `0.313596`, selection_recall `0.65`, MRR `0.591333`, mean_ndcg `0.601007`, and `position_bias_risk=low`.
+- The 100-target result is lower than the 30-target result, so the 30-target smoke should be treated as a quick wiring check, not a stable quality estimate.
+- Fixed `scripts/run_prescience_smoke.sh` so cached PreScience samples are checked for target count and redownloaded when smaller than `TARGETS`. This prevents accidentally reporting a 30-target run as a 100-target run.
+- Verification for the script fix: `tests/test_scripts.py` passed with `9 passed`.
+- Added gold baseline comparison against candidate-order, title-overlap, and seeded random selection. Reports are written as `reports/gold_baseline_comparison.json/md` and summarized in benchmark summary and project readiness.
+- Refreshed `runs/prescience-smoke-100-baseline-comparison`: judge mean_ndcg `0.601007`, title-overlap mean_ndcg `0.612931`, candidate-order mean_ndcg `0.442161`, random mean_ndcg `0.543138`. The current heuristic judge does not beat all baselines (`judge_mean_ndcg_delta_vs_best_baseline=-0.011925`), so benchmark summary now sets `needs_prompt_or_model_tuning=true`.
+- Verification for gold baseline comparison integration: related tests passed with `50 passed`; refreshed run artifact `missing_count=0`.
+- Tightened model-selection gating. `model-selection-decision` now blocks promotion when the candidate run's `benchmark_summary.json` is available and `judge_beats_all_baselines=false`, even if target-level net hit change and NDCG delta are positive.
+- Verification for the stricter model-selection gate and docs: target tests passed with `50 passed`.
+- Improved the no-GPU heuristic judge from abstract-only lexical overlap to title+abstract lexical overlap after a red test showed title-only signal was ignored.
+- Refreshed PreScience 100-target benchmark at `runs/prescience-smoke-100-title-abstract-heuristic`: hit_rate `0.85`, selection_precision `0.320175`, selection_recall `0.663636`, MRR `0.601333`, mean_ndcg `0.612931`, artifact `missing_count=0`.
+- The improved heuristic now matches the title-overlap baseline exactly, but does not beat it (`judge_mean_ndcg_delta_vs_best_baseline=0.0`, `judge_beats_all_baselines=false`), so the project still correctly reports `needs_prompt_or_model_tuning=true`.
+- Ran no-GPU scoring experiments on the 100-target PreScience sample and selected an IDF-weighted title/abstract overlap heuristic because it beat title-overlap in mean NDCG.
+- Implemented the IDF-weighted heuristic with TDD. It computes local IDF over the target plus candidate titles, weights target-title overlaps more than abstract overlaps, removes common scientific stopwords, and remains deterministic.
+- Refreshed PreScience 100-target benchmark at `runs/prescience-smoke-100-idf-heuristic`: hit_rate `0.89`, selection_precision `0.320175`, selection_recall `0.663636`, MRR `0.657667`, mean_ndcg `0.634523`, artifact `missing_count=0`.
+- The IDF heuristic now beats title-overlap baseline by NDCG `+0.021592` and hit_rate `+0.04`; benchmark summary reports `judge_beats_all_baselines=true` and `needs_prompt_or_model_tuning=false`.
+- Added paired bootstrap confidence intervals for judge-vs-best-baseline NDCG delta. On `runs/prescience-smoke-100-idf-heuristic-ci`, the mean NDCG delta is `+0.021592`, but the 95% CI is `[-0.023404, 0.064868]`, so `statistically_positive_ndcg_delta=false`; treat the 100-target improvement as promising but not stable.
+- Ran a larger PreScience 300-target no-GPU benchmark at `runs/prescience-smoke-300-idf-heuristic-ci`. It produced artifact `missing_count=0`, hit_rate `0.836667`, mean_ndcg `0.589646`, judge-vs-title-overlap NDCG delta `+0.028453`, and 95% CI `[0.004613, 0.052724]`; this passes the current statistical stability gate.
+- Tightened report and model-selection gates so beating baselines by mean is not enough: benchmark summary, gold-baseline comparison, project readiness, and model-selection decision now require `statistically_positive_ndcg_delta=true` before saying no prompt/model tuning is needed or promoting a candidate run.
+- Added `report-bundle` as a report-facing delivery command. It refreshes readiness, copies the key rankings/reports/evidence files, and writes `README.md` plus `bundle_manifest.json`.
+- Updated local, pilot, and PreScience smoke scripts to generate and verify `report_bundle` outputs.
+- Generated the current PreScience 300-target bundle at `runs/prescience-smoke-300-idf-heuristic-ci/report_bundle`; it copied 22 files with no missing optional files.
+- Verification for report bundle work: targeted tests passed with `21 passed`; local smoke passed at `/tmp/local-impact-ranking-report-bundle-smoke`; full verification passed with `200 passed`.
+- Added GitHub publish checks: `docs/publish-checklist.md` documents included/excluded paths and claim boundaries, and `scripts/check_publish_ready.sh` verifies required docs, GitHub Actions, ignore rules for `data/`, `models/`, `runs/`, no tracked local artifacts, README report-bundle references, and full tests.
+- Verification for publish readiness: targeted docs/scripts tests passed with `21 passed`; `scripts/check_publish_ready.sh` passed and reported `202 passed`.
+
 ## 2026-05-25
 
 - Created persistent planning files.

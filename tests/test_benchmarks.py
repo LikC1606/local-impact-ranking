@@ -46,3 +46,35 @@ def test_cli_benchmarks_show_prints_json():
     payload = json.loads(result.output)
     assert payload["name"] == "SciCite / ACL-ARC / MultiCite"
     assert "finetuning" in payload["pipeline_layers"]
+
+
+def test_benchmark_specs_include_evaluation_metadata():
+    prescience = get_benchmark("prescience")
+    sciimpact = get_benchmark("sciimpact")
+
+    assert prescience.recommended_order == 1
+    assert prescience.implementation_status == "ready"
+    assert "hit@k" in prescience.evaluation_metrics
+    assert "https://huggingface.co/datasets/allenai/prescience" in prescience.source_url
+    assert sciimpact.implementation_status == "planned"
+    assert "pairwise_accuracy" in sciimpact.evaluation_metrics
+
+
+def test_cli_benchmarks_plan_prints_ordered_json():
+    result = CliRunner().invoke(app, ["benchmarks", "plan"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["recommended_order"][0] == "prescience"
+    assert payload["ready_now"] == ["prescience", "scicite"]
+    assert payload["benchmarks"][0]["name"] == "PreScience"
+    assert payload["benchmarks"][0]["metrics"] == ["hit@k", "mrr", "ndcg@k", "recall@k"]
+
+
+def test_cli_benchmarks_plan_prints_markdown():
+    result = CliRunner().invoke(app, ["benchmarks", "plan", "--markdown"])
+
+    assert result.exit_code == 0
+    assert result.output.startswith("# Benchmark Evaluation Plan\n")
+    assert "| 1 | PreScience | ready |" in result.output
+    assert "pairwise_accuracy" in result.output

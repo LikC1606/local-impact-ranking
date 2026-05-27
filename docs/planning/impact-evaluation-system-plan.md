@@ -883,10 +883,13 @@ Tasks:
 - Export pairwise comparison JSONL.
 - Export DPO/preference JSONL.
 - Add LLaMA-Factory-compatible converter.
+- Report fine-tuning readiness with effective non-empty SFT counts, effective merged-DPO counts, SFT parse and empty-selection diagnostics, DPO invalid-pair and reverse-conflict diagnostics, and target-concentration flags.
+- Export a no-GPU fine-tuning preflight report that combines readiness gates with merged-DPO JSONL validation before any adapter training starts.
 
 Exit criteria:
 
 - Human-reviewed or pseudo-labeled examples can be used to train a local judge.
+- Training should not start from empty SFT targets, contradictory DPO pairs, or a merged preference file dominated by one target paper without that risk being visible in the readiness and preflight reports.
 
 ### Milestone 6: Strong Local Model Run
 
