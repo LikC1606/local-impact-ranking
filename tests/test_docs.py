@@ -94,6 +94,23 @@ def test_readme_links_to_publish_checklist():
     assert "[docs/publish-checklist.md](docs/publish-checklist.md)" in text
 
 
+def test_readme_documents_doctor_command():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "doctor --markdown" in text
+    assert "doctor.json" in text
+
+
+def test_readme_documents_final_operational_commands():
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "runs-index" in text
+    assert "model-eval" in text
+    assert "score-card" in text
+    assert "entity-resolution-report" in text
+    assert "split-prescience" in text
+
+
 def test_publish_checklist_documents_github_release_boundaries():
     text = Path("docs/publish-checklist.md").read_text(encoding="utf-8")
 

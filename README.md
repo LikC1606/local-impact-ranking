@@ -28,6 +28,15 @@ For direct development without installing:
 PYTHONPATH=src python -m local_impact_ranking.cli --help
 ```
 
+Check the local project environment before running, publishing, or debugging GitHub upload issues:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli doctor --markdown
+PYTHONPATH=src python -m local_impact_ranking.cli doctor --output runs/doctor
+```
+
+The second command writes `doctor.json` and `doctor.md` with Python, Git, optional `gh`, required-file, and publish-safety checks.
+
 ## Input
 
 Use JSONL with one paper per line:
@@ -112,6 +121,23 @@ LIMIT=150 TOP_K=5 \
 
 The comparison writes `benchmark_comparison.md`, `target_comparison.md`, `target_comparison.json`, `target_changes.csv`, `model_selection_decision.json`, and `model_selection_decision.md`. The default decision rule recommends moving to test only when dev has common labeled targets, positive `net_hit_change`, non-negative `mean_ndcg_delta`, `broken_count / common_targets <= 0.05`, and, when candidate `benchmark_summary.json` is available, both `judge_beats_all_baselines=true` and `statistically_positive_ndcg_delta=true`. Run the same command on `test.papers.jsonl` once for the final report only after dev says `promote_to_test`.
 
+If base and candidate runs already exist, run the pure post-processing evaluator:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli model-eval \
+  runs/my-dataset-dev-comparison/base \
+  runs/my-dataset-dev-comparison/candidate \
+  --output runs/my-dataset-dev-comparison/comparison
+```
+
+Index existing experiments into one matrix:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli runs-index \
+  runs \
+  --output runs/index
+```
+
 ## Public Benchmarks
 
 When you do not have a private dataset yet, list candidate public benchmarks and their pipeline mappings:
@@ -137,6 +163,20 @@ PYTHONPATH=src python -m local_impact_ranking.cli benchmarks convert-prescience 
 ```
 
 The adapter builds each target paper's candidate references from PreScience key references plus author publication history, stores gold positives in `metadata.prescience_positive_reference_ids`, and deterministically shuffles candidate order by default to reduce gold-position leakage in benchmark runs.
+
+Create fixed PreScience train/dev/test splits directly from a downloaded shard:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks split-prescience \
+  --input data/prescience/train-00000-of-00001.parquet \
+  --output data/prescience/splits \
+  --train-count 700 \
+  --dev-count 150 \
+  --test-count 150 \
+  --max-candidates 50
+```
+
+This writes `train.papers.jsonl`, `dev.papers.jsonl`, `test.papers.jsonl`, and `split_manifest.json` with source hash, split IDs, candidate counts, gold-positive counts, max-candidate setting, and shuffle seed.
 
 To fetch a bounded PreScience sample through the HuggingFace mirror and run a no-GPU benchmark pilot:
 
@@ -320,6 +360,22 @@ For evaluation metric definitions, error analysis, benchmark comparison, and tar
 `paper_evidence_report.json` and `paper_evidence_report.csv` combine each scored paper's `final_score`, `confidence_flag`, `support_band`, `max_single_edge_share`, bootstrap score uncertainty (`score_ci_low`, `score_ci_high`, `score_ci_width`, `rank_span`, `zero_score_rate`, `uncertainty_band`), and top contributing citation edges. Use this as the main report-facing paper audit table.
 
 `entity_explanations.json` explains author and institution rankings using the same score ledger, with credit split across reference authors and affiliations.
+
+`score_cards.json` and `score_cards.md` turn the top paper evidence rows into report-facing cards with score interval, credibility level, source-edge count, concentration risk, and top supporting target papers.
+
+`entity_resolution_report.json` and `entity_resolution_report.md` quantify author/institution metadata risks: reference-author ID coverage, affiliation coverage, same-name multiple-ID flags, same-ID multiple-name flags, institution variants, and whether entity rankings are `reportable` or only `exploratory`.
+
+You can regenerate these helpers for existing artifacts:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli score-card \
+  runs/example \
+  --output runs/example/score_cards
+
+PYTHONPATH=src python -m local_impact_ranking.cli entity-resolution-report \
+  --input papers.jsonl \
+  --output runs/example/entity_resolution
+```
 
 ## Run With A Local LLM Server
 

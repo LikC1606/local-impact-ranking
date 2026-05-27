@@ -21,6 +21,8 @@ def test_write_report_bundle_copies_report_ready_artifacts_and_manifest(tmp_path
     _write(run_dir / "reports" / "benchmark_summary.md", "# Benchmark Summary\n")
     _write(run_dir / "reports" / "project_readiness.md", "# Project Readiness\n")
     _write(run_dir / "reports" / "paper_evidence_report.csv", "paper_id,final_score\np1,100\n")
+    _write(run_dir / "reports" / "score_cards.md", "# Paper Score Cards\n")
+    _write(run_dir / "reports" / "entity_resolution_report.md", "# Entity Resolution Report\n")
     _write(run_dir / "reports" / "scoring_config.json", '{"version":"score_v2"}\n')
     _write(run_dir / "run_manifest.json", '{"created_at":"2026-05-27T00:00:00+00:00"}\n')
     _write(
@@ -62,6 +64,8 @@ def test_write_report_bundle_copies_report_ready_artifacts_and_manifest(tmp_path
     assert (output_dir / "bundle_manifest.json").exists()
     assert (output_dir / "rankings" / "papers.csv").read_text() == "rank,id,final_score\n1,p1,100\n"
     assert (output_dir / "reports" / "project_readiness.md").exists()
+    assert (output_dir / "reports" / "score_cards.md").exists()
+    assert (output_dir / "reports" / "entity_resolution_report.md").exists()
     assert "reports/project_readiness.json" in manifest["copied_files"]
     assert "reports/gold_evaluation.md" in manifest["missing_optional_files"]
     assert manifest["readiness"]["status"] == "needs_improvement"

@@ -24,6 +24,8 @@ REPORT_BUNDLE_FILES = [
     "reports/gold_baseline_comparison.md",
     "reports/baseline_comparison.json",
     "reports/paper_evidence_report.csv",
+    "reports/score_cards.md",
+    "reports/entity_resolution_report.md",
     "reports/paper_stability_report.csv",
     "reports/paper_score_uncertainty_report.csv",
     "reports/scoring_config.json",

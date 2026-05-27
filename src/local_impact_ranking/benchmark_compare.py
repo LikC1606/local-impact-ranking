@@ -47,6 +47,60 @@ def write_benchmark_comparison(run_dirs: list[str | Path], output_dir: str | Pat
     )
 
 
+def write_model_eval(
+    base_run_dir: str | Path,
+    candidate_run_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    max_broken_rate: float = 0.05,
+    min_ndcg_delta: float = 0.0,
+) -> dict[str, Any]:
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    write_benchmark_comparison([base_run_dir, candidate_run_dir], destination)
+    write_gold_target_comparison(base_run_dir, candidate_run_dir, destination)
+    write_model_selection_decision(
+        destination,
+        max_broken_rate=max_broken_rate,
+        min_ndcg_delta=min_ndcg_delta,
+    )
+    benchmark_rows = benchmark_comparison_rows([base_run_dir, candidate_run_dir])
+    target_comparison = json.loads(
+        (destination / "target_comparison.json").read_text(encoding="utf-8")
+    )
+    decision = json.loads(
+        (destination / "model_selection_decision.json").read_text(encoding="utf-8")
+    )
+    report = {
+        "base_run": Path(base_run_dir).name,
+        "candidate_run": Path(candidate_run_dir).name,
+        "output_dir": str(destination),
+        "benchmark_comparison": benchmark_rows,
+        "target_comparison_summary": target_comparison.get("summary", {}),
+        "decision": decision,
+        "artifacts": [
+            "benchmark_comparison.csv",
+            "benchmark_comparison.md",
+            "target_comparison.json",
+            "target_changes.csv",
+            "target_comparison.md",
+            "model_selection_decision.json",
+            "model_selection_decision.md",
+            "model_eval.json",
+            "model_eval.md",
+        ],
+    }
+    (destination / "model_eval.json").write_text(
+        json.dumps(report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (destination / "model_eval.md").write_text(
+        render_model_eval_markdown(report),
+        encoding="utf-8",
+    )
+    return report
+
+
 def write_gold_target_comparison(
     base_run_dir: str | Path,
     candidate_run_dir: str | Path,
@@ -309,6 +363,49 @@ def render_model_selection_decision_markdown(decision: dict[str, Any]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def render_model_eval_markdown(report: dict[str, Any]) -> str:
+    decision = report.get("decision", {})
+    target_summary = report.get("target_comparison_summary", {})
+    lines = [
+        "# Model Eval",
+        "",
+        f"Base run: `{report.get('base_run', '')}`",
+        f"Candidate run: `{report.get('candidate_run', '')}`",
+        "",
+        "## Decision",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        f"| recommendation | {decision.get('recommendation', '')} |",
+        f"| pass | {_yes_no(decision.get('pass'))} |",
+        f"| failed_checks | {_join(decision.get('failed_checks', []))} |",
+        "",
+        "## Target Delta",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+    ]
+    for key in [
+        "common_targets",
+        "fixed_count",
+        "broken_count",
+        "net_hit_change",
+        "mean_ndcg_delta",
+    ]:
+        lines.append(f"| {key} | {_format_summary_value(target_summary.get(key))} |")
+    lines.extend(
+        [
+            "",
+            "## Artifacts",
+            "",
+        ]
+    )
+    for artifact in report.get("artifacts", []):
+        lines.append(f"- `{artifact}`")
+    lines.append("")
     return "\n".join(lines)
 
 

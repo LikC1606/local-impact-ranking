@@ -5,6 +5,10 @@ import random
 from pathlib import Path
 from typing import Any, Iterable
 
+from local_impact_ranking.manifest import sha256_file
+from local_impact_ranking.models import Paper
+from local_impact_ranking.splits import split_papers
+
 
 def convert_prescience_file(
     input_path: str | Path,
@@ -60,6 +64,95 @@ def convert_prescience_records(
     return count
 
 
+def write_prescience_splits(
+    input_path: str | Path,
+    output_dir: str | Path,
+    *,
+    train_count: int,
+    dev_count: int,
+    test_count: int,
+    max_candidates: int = 50,
+    shuffle_seed: int = 13,
+) -> dict[str, Any]:
+    records = list(_iter_records(input_path))
+    papers = _convert_prescience_records_to_papers(
+        records,
+        max_candidates=max_candidates,
+        shuffle_seed=shuffle_seed,
+    )
+    splits = split_papers(
+        papers,
+        train_count=train_count,
+        dev_count=dev_count,
+        test_count=test_count,
+    )
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    for split_name, split_rows in splits.items():
+        _write_papers_jsonl(destination / f"{split_name}.papers.jsonl", split_rows)
+
+    source = Path(input_path)
+    manifest = {
+        "benchmark": "prescience",
+        "input": {
+            "path": str(source),
+            "sha256": sha256_file(source),
+            "raw_record_count": len(records),
+            "converted_target_count": len(papers),
+        },
+        "method": {
+            "type": "ordered_prefix_after_conversion",
+            "note": (
+                "PreScience records are converted to local target papers in input order; "
+                "the converted target order is then split by explicit prefix counts."
+            ),
+            "max_candidates": max_candidates,
+            "shuffle_seed": shuffle_seed,
+        },
+        "splits": {
+            split_name: _split_manifest_row(split_rows, f"{split_name}.papers.jsonl")
+            for split_name, split_rows in splits.items()
+        },
+    }
+    (destination / "split_manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _convert_prescience_records_to_papers(
+    records: Iterable[dict[str, Any]],
+    *,
+    max_candidates: int,
+    shuffle_seed: int,
+) -> list[Paper]:
+    records_list = list(records)
+    by_corpus_id = {
+        str(record["corpus_id"]): record
+        for record in records_list
+        if record.get("corpus_id") is not None
+    }
+    publication_history_by_author_id = _publication_history_by_author_id(records_list)
+    papers = []
+    for record in records_list:
+        if not _is_target(record):
+            continue
+        papers.append(
+            Paper.model_validate(
+                _target_to_paper(
+                    record,
+                    by_corpus_id,
+                    publication_history_by_author_id,
+                    max_candidates=max_candidates,
+                    shuffle_seed=shuffle_seed,
+                )
+            )
+        )
+    return papers
+
+
 def _iter_records(input_path: str | Path) -> Iterable[dict[str, Any]]:
     source = Path(input_path)
     if source.suffix == ".jsonl":
@@ -90,6 +183,25 @@ def _iter_records(input_path: str | Path) -> Iterable[dict[str, Any]]:
             yield from batch.to_pylist()
         return
     raise ValueError(f"Unsupported PreScience input format: {source.suffix}")
+
+
+def _write_papers_jsonl(path: Path, papers: list[Paper]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for paper in papers:
+            handle.write(json.dumps(paper.model_dump(mode="json"), ensure_ascii=False) + "\n")
+
+
+def _split_manifest_row(papers: list[Paper], path: str) -> dict[str, Any]:
+    return {
+        "path": path,
+        "count": len(papers),
+        "paper_ids": [paper.paper_id for paper in papers],
+        "candidate_reference_count": sum(len(paper.references) for paper in papers),
+        "gold_positive_reference_count": sum(
+            len(paper.metadata.get("prescience_positive_reference_ids", []))
+            for paper in papers
+        ),
+    }
 
 
 def _target_to_paper(

@@ -47,6 +47,304 @@ def test_cli_validate_writes_validation_reports(tmp_path):
     assert "# Validation Report" in markdown
 
 
+def test_cli_doctor_writes_json_markdown_and_prints_selected_format(tmp_path):
+    output_dir = tmp_path / "doctor"
+
+    result = CliRunner().invoke(
+        app,
+        ["doctor", "--root", ".", "--output", str(output_dir), "--markdown"],
+    )
+
+    assert result.exit_code == 0
+    assert "# Project Doctor" in result.stdout
+    payload = json.loads((output_dir / "doctor.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "doctor.md").read_text(encoding="utf-8")
+    assert payload["required_files"]["missing_count"] == 0
+    assert "local_artifacts_not_tracked" in payload["passed_checks"]
+    assert "# Project Doctor" in markdown
+
+
+def test_cli_runs_index_writes_experiment_matrix(tmp_path):
+    runs_root = tmp_path / "runs"
+    output_dir = tmp_path / "runs-index"
+    run_dir = runs_root / "run-a"
+    (run_dir / "reports").mkdir(parents=True)
+    (run_dir / "reports" / "benchmark_summary.json").write_text(
+        json.dumps(
+            {
+                "benchmark": {"paper_count": 12},
+                "gold_quality": {"hit_rate": 0.8, "mean_ndcg": 0.6},
+                "gold_baseline_comparison": {
+                    "judge_mean_ndcg_delta_vs_best_baseline": 0.02,
+                    "statistically_positive_ndcg_delta": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "reports" / "project_readiness.json").write_text(
+        json.dumps(
+            {
+                "decision": {"status": "reportable"},
+                "quality": {"evidence_level": "gold_validated"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["runs-index", str(runs_root), "--output", str(output_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert (output_dir / "index.csv").exists()
+    assert (output_dir / "index.md").exists()
+    assert "Wrote runs index" in result.stdout
+
+
+def test_cli_model_eval_writes_promotion_report(tmp_path):
+    base_dir = tmp_path / "base"
+    candidate_dir = tmp_path / "candidate"
+    output_dir = tmp_path / "model-eval"
+    for run_dir, hit_rate, ndcg in [
+        (base_dir, 0.0, 0.0),
+        (candidate_dir, 1.0, 1.0),
+    ]:
+        (run_dir / "reports").mkdir(parents=True)
+        (run_dir / "reports" / "benchmark_summary.json").write_text(
+            json.dumps(
+                {
+                    "benchmark": {"paper_count": 1},
+                    "judge_quality": {
+                        "parse_success_rate": 1.0,
+                        "invalid_selection_rate": 0.0,
+                    },
+                    "gold_quality": {"hit_rate": hit_rate, "mean_ndcg": ndcg},
+                    "decision": {"usable_for_benchmark_report": True},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    (base_dir / "audit").mkdir()
+    (base_dir / "audit" / "judge_outputs.jsonl").write_text(
+        json.dumps(
+            {
+                "target_paper_id": "p1",
+                "candidate_reference_ids": ["r1", "g1"],
+                "selected_references": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (base_dir / "reports" / "gold_evaluation.json").write_text(
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "target_paper_id": "p1",
+                        "positive_reference_ids": ["g1"],
+                        "selected_reference_ids": ["r1"],
+                        "selected_positive_reference_ids": [],
+                        "hit": False,
+                        "reciprocal_rank": 0.0,
+                        "ndcg": 0.0,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (candidate_dir / "reports" / "gold_evaluation.json").write_text(
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "target_paper_id": "p1",
+                        "positive_reference_ids": ["g1"],
+                        "selected_reference_ids": ["g1"],
+                        "selected_positive_reference_ids": ["g1"],
+                        "hit": True,
+                        "reciprocal_rank": 1.0,
+                        "ndcg": 1.0,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "model-eval",
+            str(base_dir),
+            str(candidate_dir),
+            "--output",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote model eval" in result.stdout
+    assert (output_dir / "benchmark_comparison.md").exists()
+    assert (output_dir / "target_changes.csv").exists()
+    assert (output_dir / "model_eval.md").exists()
+
+
+def test_cli_score_card_writes_reportable_cards(tmp_path):
+    run_dir = tmp_path / "run"
+    output_dir = tmp_path / "score-cards"
+    reports = run_dir / "reports"
+    reports.mkdir(parents=True)
+    (reports / "paper_evidence_report.json").write_text(
+        json.dumps(
+            {
+                "papers": [
+                    {
+                        "paper_id": "r1",
+                        "paper_title": "Important Method",
+                        "final_score": 91.0,
+                        "confidence_flag": "stable",
+                        "support_band": "strong",
+                        "max_single_edge_share": 0.3,
+                        "score_ci_low": 80.0,
+                        "score_ci_high": 95.0,
+                        "source_edge_count": 2,
+                        "top_source_edges": [],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["score-card", str(run_dir), "--output", str(output_dir), "--top-n", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote score cards" in result.stdout
+    assert (output_dir / "score_cards.json").exists()
+    assert "# Paper Score Cards" in (output_dir / "score_cards.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_cli_entity_resolution_report_writes_quality_report(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "entity-resolution"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Target",
+                "references": [
+                    {
+                        "reference_id": "r1",
+                        "title": "Reference",
+                        "authors": [
+                            {
+                                "name": "Author A",
+                                "affiliations": ["Institution A"],
+                                "ids": {"s2": "a1"},
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "entity-resolution-report",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote entity resolution report" in result.stdout
+    assert (output_dir / "entity_resolution_report.json").exists()
+    assert "# Entity Resolution Report" in (
+        output_dir / "entity_resolution_report.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_cli_benchmarks_split_prescience_writes_fixed_splits(tmp_path):
+    source = tmp_path / "prescience.jsonl"
+    output_dir = tmp_path / "prescience-splits"
+    rows = []
+    for index in range(1, 4):
+        rows.extend(
+            [
+                {
+                    "corpus_id": f"target-{index}",
+                    "title": f"Target {index}",
+                    "date": "2024-01-01",
+                    "roles": ["target"],
+                    "key_references": [{"corpus_id": f"positive-{index}"}],
+                    "authors": [
+                        {
+                            "author_id": f"author-{index}",
+                            "name": f"Author {index}",
+                            "publication_history": None,
+                        }
+                    ],
+                },
+                {
+                    "corpus_id": f"positive-{index}",
+                    "title": f"Positive {index}",
+                    "roles": ["target.key_reference"],
+                    "authors": [{"name": f"Prior {index}"}],
+                },
+            ]
+        )
+    source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmarks",
+            "split-prescience",
+            "--input",
+            str(source),
+            "--output",
+            str(output_dir),
+            "--train-count",
+            "1",
+            "--dev-count",
+            "1",
+            "--test-count",
+            "1",
+            "--max-candidates",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote PreScience splits" in result.stdout
+    manifest = json.loads((output_dir / "split_manifest.json").read_text())
+    assert manifest["benchmark"] == "prescience"
+    assert manifest["splits"]["train"]["paper_ids"] == ["target-1"]
+    assert manifest["splits"]["dev"]["paper_ids"] == ["target-2"]
+    assert manifest["splits"]["test"]["paper_ids"] == ["target-3"]
+
+
 def test_cli_convert_csv_writes_jsonl_that_validate_can_read(tmp_path):
     input_path = tmp_path / "papers.csv"
     output_path = tmp_path / "papers.jsonl"
@@ -384,6 +682,10 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert (output_dir / "reports" / "entity_explanations.json").exists()
     assert (output_dir / "reports" / "paper_evidence_report.json").exists()
     assert (output_dir / "reports" / "paper_evidence_report.csv").exists()
+    assert (output_dir / "reports" / "score_cards.json").exists()
+    assert (output_dir / "reports" / "score_cards.md").exists()
+    assert (output_dir / "reports" / "entity_resolution_report.json").exists()
+    assert (output_dir / "reports" / "entity_resolution_report.md").exists()
     evidence_csv = (output_dir / "reports" / "paper_evidence_report.csv").read_text()
     assert "score_ci_width" in evidence_csv
     assert "uncertainty_band" in evidence_csv
@@ -417,6 +719,10 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert "reports/paper_stability_report.csv" in artifact_paths
     assert "reports/paper_score_uncertainty_report.json" in artifact_paths
     assert "reports/paper_score_uncertainty_report.csv" in artifact_paths
+    assert "reports/score_cards.json" in artifact_paths
+    assert "reports/score_cards.md" in artifact_paths
+    assert "reports/entity_resolution_report.json" in artifact_paths
+    assert "reports/entity_resolution_report.md" in artifact_paths
     assert "finetuning/finetuning_readiness.json" in artifact_paths
     assert "finetuning/finetuning_readiness.md" in artifact_paths
     assert "finetuning/finetuning_preflight.json" in artifact_paths

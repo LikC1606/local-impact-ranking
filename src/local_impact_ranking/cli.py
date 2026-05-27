@@ -18,6 +18,7 @@ from local_impact_ranking.artifacts import RUN_ARTIFACTS, artifact_index
 from local_impact_ranking.benchmark_compare import (
     write_benchmark_comparison,
     write_gold_target_comparison,
+    write_model_eval,
     write_model_selection_decision,
 )
 from local_impact_ranking.benchmark_status import (
@@ -37,11 +38,13 @@ from local_impact_ranking.baselines import (
 )
 from local_impact_ranking.contexts import context_coverage_report
 from local_impact_ranking.data_readiness import data_readiness_report
+from local_impact_ranking.doctor import doctor_report, render_doctor_markdown
 from local_impact_ranking.evaluate import evaluate_judge_results, render_evaluation_markdown
 from local_impact_ranking.error_analysis import (
     gold_error_analysis_report,
     render_gold_error_analysis_markdown,
 )
+from local_impact_ranking.entity_resolution import write_entity_resolution_report
 from local_impact_ranking.explanations import (
     entity_influence_explanations,
     export_paper_evidence_csv,
@@ -84,6 +87,7 @@ from local_impact_ranking.project_readiness import (
     write_project_readiness_report,
 )
 from local_impact_ranking.report_bundle import write_report_bundle
+from local_impact_ranking.runs_index import write_runs_index
 from local_impact_ranking.scoring import (
     add_fused_paper_scores,
     scoring_edges,
@@ -91,7 +95,15 @@ from local_impact_ranking.scoring import (
     scoring_config,
 )
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
-from local_impact_ranking.prescience_adapter import convert_prescience_file
+from local_impact_ranking.score_cards import (
+    render_score_cards_markdown,
+    score_cards_from_evidence_report,
+    write_score_cards,
+)
+from local_impact_ranking.prescience_adapter import (
+    convert_prescience_file,
+    write_prescience_splits,
+)
 from local_impact_ranking.splits import write_paper_splits
 from local_impact_ranking.stability import (
     bootstrap_paper_score_report,
@@ -143,6 +155,38 @@ def convert_csv(
 ) -> None:
     count = convert_papers_csv_to_jsonl(input, output)
     typer.echo(f"Wrote {count} converted papers to {output}")
+
+
+@app.command("doctor")
+def doctor(
+    root: Path = typer.Option(Path("."), "--root", exists=True, file_okay=False, readable=True),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    markdown: bool = typer.Option(False, "--markdown/--json"),
+) -> None:
+    report = doctor_report(root)
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "doctor.json").write_text(
+            json.dumps(report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (output / "doctor.md").write_text(
+            render_doctor_markdown(report),
+            encoding="utf-8",
+        )
+    if markdown:
+        typer.echo(render_doctor_markdown(report))
+    else:
+        typer.echo(json.dumps(report, indent=2))
+
+
+@app.command("runs-index")
+def runs_index(
+    runs_root: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    write_runs_index(runs_root, output)
+    typer.echo(f"Wrote runs index to {output}")
 
 
 @app.command("split")
@@ -300,6 +344,51 @@ def model_selection_decision_command(
     typer.echo(f"Wrote model selection decision to {comparison_dir}")
 
 
+@app.command("model-eval")
+def model_eval(
+    base_run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    candidate_run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_broken_rate: float = typer.Option(0.05, "--max-broken-rate"),
+    min_ndcg_delta: float = typer.Option(0.0, "--min-ndcg-delta"),
+) -> None:
+    report = write_model_eval(
+        base_run_dir,
+        candidate_run_dir,
+        output,
+        max_broken_rate=max_broken_rate,
+        min_ndcg_delta=min_ndcg_delta,
+    )
+    typer.echo(
+        "Wrote model eval to "
+        f"{output} (recommendation={report['decision']['recommendation']})"
+    )
+
+
+@app.command("score-card")
+def score_card(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    top_n: int = typer.Option(20, "--top-n", min=1),
+    max_edges: int = typer.Option(5, "--max-edges", min=0),
+) -> None:
+    report = write_score_cards(run_dir, output, top_n=top_n, max_edges=max_edges)
+    typer.echo(f"Wrote score cards to {output} (cards={report['card_count']})")
+
+
+@app.command("entity-resolution-report")
+def entity_resolution_report_command(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    papers = load_papers_jsonl(input)
+    report = write_entity_resolution_report(papers, output)
+    typer.echo(
+        "Wrote entity resolution report to "
+        f"{output} (scope={report['quality_gate']['entity_rankings_scope']})"
+    )
+
+
 @app.command("benchmark-status")
 def benchmark_status(
     run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
@@ -444,6 +533,36 @@ def benchmarks_convert_prescience(
         shuffle_seed=shuffle_seed,
     )
     typer.echo(f"Wrote {count} converted papers to {output}")
+
+
+@benchmarks_app.command("split-prescience")
+def benchmarks_split_prescience(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    train_count: int = typer.Option(..., "--train-count", min=0),
+    dev_count: int = typer.Option(..., "--dev-count", min=0),
+    test_count: int = typer.Option(..., "--test-count", min=0),
+    max_candidates: int = typer.Option(50, "--max-candidates", min=1),
+    shuffle_seed: int = typer.Option(13, "--shuffle-seed"),
+) -> None:
+    try:
+        manifest = write_prescience_splits(
+            input,
+            output,
+            train_count=train_count,
+            dev_count=dev_count,
+            test_count=test_count,
+            max_candidates=max_candidates,
+            shuffle_seed=shuffle_seed,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "Wrote PreScience splits to "
+        f"{output} (train={manifest['splits']['train']['count']}, "
+        f"dev={manifest['splits']['dev']['count']}, "
+        f"test={manifest['splits']['test']['count']})"
+    )
 
 
 @app.command()
@@ -783,6 +902,20 @@ def run(
         current_paper_evidence_report,
         reports_dir / "paper_evidence_report.csv",
     )
+    current_score_cards = score_cards_from_evidence_report(
+        current_paper_evidence_report,
+        top_n=20,
+        max_edges=5,
+    )
+    (reports_dir / "score_cards.json").write_text(
+        json.dumps(current_score_cards, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (reports_dir / "score_cards.md").write_text(
+        render_score_cards_markdown(current_score_cards),
+        encoding="utf-8",
+    )
+    write_entity_resolution_report(papers, reports_dir)
     (reports_dir / "mvp_summary.json").write_text(
         json.dumps(current_mvp_summary, indent=2) + "\n",
         encoding="utf-8",

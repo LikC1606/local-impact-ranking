@@ -4,6 +4,7 @@ import json
 from local_impact_ranking.benchmark_compare import (
     benchmark_comparison_rows,
     compare_gold_target_reports,
+    write_model_eval,
     model_selection_decision,
     render_model_selection_decision_markdown,
     render_gold_target_comparison_markdown,
@@ -502,6 +503,75 @@ def test_write_model_selection_decision_uses_candidate_benchmark_baseline_gate(t
     assert payload["recommendation"] == "keep_base_or_iterate"
     assert "judge_beats_all_baselines" in payload["failed_checks"]
     assert payload["metrics"]["judge_mean_ndcg_delta_vs_best_baseline"] == -0.01
+
+
+def test_write_model_eval_runs_full_promotion_pipeline(tmp_path):
+    base_dir = tmp_path / "base"
+    candidate_dir = tmp_path / "candidate"
+    output_dir = tmp_path / "model-eval"
+    write_summary(base_dir, paper_count=2, hit_rate=0.5, ndcg=0.5)
+    write_summary(candidate_dir, paper_count=2, hit_rate=1.0, ndcg=0.75)
+    (base_dir / "audit").mkdir()
+    (base_dir / "audit" / "judge_outputs.jsonl").write_text(
+        json.dumps(
+            {
+                "target_paper_id": "p1",
+                "candidate_reference_ids": ["r1", "g1"],
+                "selected_references": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (base_dir / "reports" / "gold_evaluation.json").write_text(
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "target_paper_id": "p1",
+                        "positive_reference_ids": ["g1"],
+                        "selected_reference_ids": ["r1"],
+                        "selected_positive_reference_ids": [],
+                        "hit": False,
+                        "reciprocal_rank": 0.0,
+                        "ndcg": 0.0,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (candidate_dir / "reports" / "gold_evaluation.json").write_text(
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "target_paper_id": "p1",
+                        "positive_reference_ids": ["g1"],
+                        "selected_reference_ids": ["g1"],
+                        "selected_positive_reference_ids": ["g1"],
+                        "hit": True,
+                        "reciprocal_rank": 1.0,
+                        "ndcg": 1.0,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = write_model_eval(base_dir, candidate_dir, output_dir)
+
+    assert report["base_run"] == "base"
+    assert report["candidate_run"] == "candidate"
+    assert report["decision"]["recommendation"] == "promote_to_test"
+    assert (output_dir / "benchmark_comparison.csv").exists()
+    assert (output_dir / "target_comparison.json").exists()
+    assert (output_dir / "model_selection_decision.json").exists()
+    assert (output_dir / "model_eval.json").exists()
+    assert "# Model Eval" in (output_dir / "model_eval.md").read_text(encoding="utf-8")
 
 
 def test_render_model_selection_decision_markdown_lists_failed_checks():

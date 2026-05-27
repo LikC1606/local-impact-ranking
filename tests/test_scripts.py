@@ -45,6 +45,8 @@ def test_run_pilot_script_checks_server_judges_then_scores_from_audit():
     assert 'test -s "${OUTPUT}/reports/paper_score_uncertainty_report.csv"' in script
     assert 'test -s "${OUTPUT}/reports/paper_evidence_report.json"' in script
     assert 'test -s "${OUTPUT}/reports/paper_evidence_report.csv"' in script
+    assert 'test -s "${OUTPUT}/reports/score_cards.md"' in script
+    assert 'test -s "${OUTPUT}/reports/entity_resolution_report.md"' in script
     assert 'test -s "${OUTPUT}/reports/mvp_summary.json"' in script
     assert 'test -s "${OUTPUT}/reports/mvp_summary.md"' in script
     assert 'test -s "${OUTPUT}/finetuning/finetuning_readiness.json"' in script
@@ -79,6 +81,8 @@ def test_run_local_smoke_script_runs_heuristic_examples_and_checks_context_weigh
     assert 'test -s "${OUTPUT}/context/reports/project_readiness.json"' in script
     assert 'test -s "${OUTPUT}/context/reports/project_readiness.md"' in script
     assert 'test -s "${OUTPUT}/context/reports/paper_evidence_report.csv"' in script
+    assert 'test -s "${OUTPUT}/context/reports/score_cards.md"' in script
+    assert 'test -s "${OUTPUT}/context/reports/entity_resolution_report.md"' in script
     assert 'test -s "${OUTPUT}/context/finetuning/finetuning_readiness.md"' in script
     assert 'test -s "${OUTPUT}/context/finetuning/finetuning_preflight.md"' in script
     assert 'test -f "${OUTPUT}/context/finetuning/context_hard_negative_dpo.jsonl"' in script

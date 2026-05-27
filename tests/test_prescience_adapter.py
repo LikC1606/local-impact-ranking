@@ -4,7 +4,10 @@ from typer.testing import CliRunner
 
 from local_impact_ranking.cli import app
 from local_impact_ranking.io import load_papers_jsonl
-from local_impact_ranking.prescience_adapter import convert_prescience_file
+from local_impact_ranking.prescience_adapter import (
+    convert_prescience_file,
+    write_prescience_splits,
+)
 
 
 def write_prescience_fixture(path):
@@ -113,3 +116,78 @@ def test_cli_benchmarks_convert_prescience_writes_local_schema(tmp_path):
     assert result.exit_code == 0
     assert "Wrote 1 converted papers" in result.output
     assert load_papers_jsonl(output)[0].metadata["source_benchmark"] == "prescience"
+
+
+def test_write_prescience_splits_exports_fixed_protocol_manifest(tmp_path):
+    source = tmp_path / "prescience.jsonl"
+    output_dir = tmp_path / "splits"
+    rows = []
+    for index in range(1, 5):
+        rows.extend(
+            [
+                {
+                    "corpus_id": f"target-{index}",
+                    "title": f"Target {index}",
+                    "date": "2024-01-01",
+                    "roles": ["target"],
+                    "key_references": [
+                        {"corpus_id": f"positive-{index}", "num_citations": index}
+                    ],
+                    "authors": [
+                        {
+                            "author_id": f"author-{index}",
+                            "name": f"Author {index}",
+                            "publication_history": None,
+                        }
+                    ],
+                },
+                {
+                    "corpus_id": f"positive-{index}",
+                    "title": f"Positive {index}",
+                    "date": "2023-01-01",
+                    "roles": ["target.key_reference"],
+                    "authors": [{"name": f"Prior {index}"}],
+                },
+                {
+                    "corpus_id": f"negative-{index}",
+                    "title": f"Negative {index}",
+                    "date": "2022-01-01",
+                    "roles": ["target.author.publication_history"],
+                    "authors": [
+                        {"author_id": f"author-{index}", "name": f"History {index}"}
+                    ],
+                },
+            ]
+        )
+    source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    manifest = write_prescience_splits(
+        source,
+        output_dir,
+        train_count=2,
+        dev_count=1,
+        test_count=1,
+        max_candidates=10,
+        shuffle_seed=7,
+    )
+
+    assert [paper.paper_id for paper in load_papers_jsonl(output_dir / "train.papers.jsonl")] == [
+        "target-1",
+        "target-2",
+    ]
+    assert [paper.paper_id for paper in load_papers_jsonl(output_dir / "dev.papers.jsonl")] == [
+        "target-3",
+    ]
+    assert [paper.paper_id for paper in load_papers_jsonl(output_dir / "test.papers.jsonl")] == [
+        "target-4",
+    ]
+    written_manifest = json.loads((output_dir / "split_manifest.json").read_text())
+    assert manifest == written_manifest
+    assert manifest["benchmark"] == "prescience"
+    assert manifest["method"]["type"] == "ordered_prefix_after_conversion"
+    assert manifest["method"]["max_candidates"] == 10
+    assert manifest["method"]["shuffle_seed"] == 7
+    assert manifest["splits"]["train"]["candidate_reference_count"] == 4
+    assert manifest["splits"]["train"]["gold_positive_reference_count"] == 2
+    assert manifest["splits"]["dev"]["paper_ids"] == ["target-3"]
+    assert manifest["splits"]["test"]["gold_positive_reference_count"] == 1

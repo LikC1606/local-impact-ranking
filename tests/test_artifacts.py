@@ -38,3 +38,7 @@ def test_run_artifacts_include_benchmark_summary_reports():
     assert "reports/gold_candidate_position.md" in RUN_ARTIFACTS
     assert "reports/gold_baseline_comparison.json" in RUN_ARTIFACTS
     assert "reports/gold_baseline_comparison.md" in RUN_ARTIFACTS
+    assert "reports/score_cards.json" in RUN_ARTIFACTS
+    assert "reports/score_cards.md" in RUN_ARTIFACTS
+    assert "reports/entity_resolution_report.json" in RUN_ARTIFACTS
+    assert "reports/entity_resolution_report.md" in RUN_ARTIFACTS
