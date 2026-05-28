@@ -202,6 +202,19 @@ def test_run_sciimpact_sft_baseline_script_converts_scores_and_evaluates():
     assert "pairwise_accuracy=" in script
 
 
+def test_run_sciimpact_dpo_export_smoke_script_exports_and_validates_preferences():
+    script = Path("scripts/run_sciimpact_dpo_export_smoke.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_train_clean.jsonl}"' in script
+    assert 'LIMIT="${LIMIT:-1000}"' in script
+    assert "benchmarks export-sciimpact-dpo" in script
+    assert "validate-dpo-data" in script
+    assert 'test -s "${OUTPUT}/finetuning/sciimpact_dpo_preferences.jsonl"' in script
+    assert 'test -s "${OUTPUT}/finetuning/sciimpact_dpo_manifest.json"' in script
+    assert 'test -s "${OUTPUT}/finetuning/dpo_data_validation.json"' in script
+    assert "loaded_example_count" in script
+
+
 def test_download_prescience_sample_script_streams_from_mirror():
     script = Path("scripts/download_prescience_sample.sh").read_text(encoding="utf-8")
 

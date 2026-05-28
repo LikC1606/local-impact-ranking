@@ -5,7 +5,10 @@ from typer.testing import CliRunner
 
 from local_impact_ranking.cli import app
 from local_impact_ranking.io import load_papers_jsonl
-from local_impact_ranking.sciimpact_adapter import convert_sciimpact_jsonl
+from local_impact_ranking.sciimpact_adapter import (
+    convert_sciimpact_jsonl,
+    export_sciimpact_dpo_jsonl,
+)
 
 
 def write_sciimpact_fixture(path):
@@ -196,6 +199,76 @@ def test_convert_sciimpact_sharegpt_uses_content_stable_ids(tmp_path):
     assert shared[0].metadata["sciimpact_pair_ids"] == ["sciimpact-1", "sciimpact-2"]
 
 
+def test_export_sciimpact_dpo_jsonl_writes_chosen_and_rejected_answers(tmp_path):
+    source = tmp_path / "sciimpact_sft.jsonl"
+    output = tmp_path / "sciimpact_dpo.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {
+                        "from": "system",
+                        "value": (
+                            "You are an impartial bibliometrics analyst. Your reply must be "
+                            "either 'Paper A has more citations.' or "
+                            "'Paper B has more citations.'"
+                        ),
+                    },
+                    {
+                        "from": "human",
+                        "value": (
+                            "Paper A: Title: Low Impact Abstract: Narrow. "
+                            "Paper B: Title: High Impact Abstract: Broad. "
+                            "Which paper has more citations?"
+                        ),
+                    },
+                    {"from": "gpt", "value": "Paper B has more citations."},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = export_sciimpact_dpo_jsonl(source, output)
+
+    assert manifest["source_record_count"] == 1
+    assert manifest["dpo_record_count"] == 1
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert record["label_source"] == "sciimpact_sft"
+    assert record["chosen"]["value"] == "Paper B has more citations."
+    assert record["rejected"]["value"] == "Paper A has more citations."
+    assert record["winner_id"].startswith("sciimpact:paper:")
+    assert record["loser_id"].startswith("sciimpact:paper:")
+    assert record["impact_dimension"] == "citation"
+    assert record["conversations"][0]["from"] == "system"
+    assert record["conversations"][1]["from"] == "human"
+
+
+def test_export_sciimpact_dpo_jsonl_skips_invalid_rows_by_default(tmp_path):
+    source = tmp_path / "sciimpact_invalid.jsonl"
+    output = tmp_path / "sciimpact_dpo.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "human", "value": "Paper A: Title: Broken Abstract: Missing B."},
+                    {"from": "gpt", "value": "Paper B has more citations."},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = export_sciimpact_dpo_jsonl(source, output, skip_invalid=True)
+
+    assert manifest["source_record_count"] == 1
+    assert manifest["dpo_record_count"] == 0
+    assert manifest["skipped_record_count"] == 1
+    assert output.read_text(encoding="utf-8") == ""
+
+
 def test_convert_sciimpact_can_skip_invalid_sft_rows_with_manifest_report(tmp_path):
     source = tmp_path / "sciimpact_sft_invalid.jsonl"
     output = tmp_path / "sciimpact_sft_invalid"
@@ -329,3 +402,45 @@ def test_cli_benchmarks_convert_sciimpact_skips_invalid_rows_by_default(tmp_path
     assert manifest["source_record_count"] == 1
     assert manifest["pair_count"] == 0
     assert manifest["skipped_pair_count"] == 1
+
+
+def test_cli_benchmarks_export_sciimpact_dpo_writes_preference_file(tmp_path):
+    source = tmp_path / "sciimpact_sft.jsonl"
+    output = tmp_path / "sciimpact_dpo.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "system", "value": "Which paper has more citations?"},
+                    {
+                        "from": "human",
+                        "value": (
+                            "Paper A: Title: Low Impact Abstract: Narrow. "
+                            "Paper B: Title: High Impact Abstract: Broad. "
+                            "Which paper has more citations?"
+                        ),
+                    },
+                    {"from": "gpt", "value": "Paper B has more citations."},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmarks",
+            "export-sciimpact-dpo",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote 1 SciImpact DPO preference records" in result.output
+    assert output.exists()
+    assert (tmp_path / "sciimpact_dpo_manifest.json").exists()

@@ -253,6 +253,14 @@ LIMIT=1000 scripts/run_sciimpact_sft_baseline.sh runs/sciimpact-sft-baseline
 
 This converts the SFT prefix, writes `rankings/sciimpact_text_prior.csv`, and evaluates it with `evaluate-pairwise-impact`. On the full downloaded SciImpact test split, this simple baseline reached `pairwise_accuracy=0.494`, `non_tie_pairwise_accuracy=0.507`, and `coverage_rate=1.000` after skipping 396 malformed rows; treat it as a lower bound for local model fine-tuning, not as the final model result.
 
+Export official SciImpact SFT rows into DPO preference data for local fine-tuning:
+
+```bash
+scripts/run_sciimpact_dpo_export_smoke.sh runs/sciimpact-dpo-export
+```
+
+On the downloaded SciImpact train split, this writes 87,984 clean DPO preference records and skips 531 malformed rows. The output file is `finetuning/sciimpact_dpo_preferences.jsonl`, which can be passed to `validate-dpo-data` and then to `train-dpo`.
+
 Evaluate an existing paper ranking against pairwise impact labels:
 
 ```bash

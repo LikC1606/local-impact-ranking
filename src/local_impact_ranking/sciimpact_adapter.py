@@ -120,6 +120,56 @@ def convert_sciimpact_jsonl(
     return manifest
 
 
+def export_sciimpact_dpo_jsonl(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    skip_invalid: bool = False,
+) -> dict[str, Any]:
+    source = Path(input_path)
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source_record_count = 0
+    dpo_record_count = 0
+    skipped_records: list[dict[str, Any]] = []
+
+    with source.open("r", encoding="utf-8") as input_handle, destination.open(
+        "w",
+        encoding="utf-8",
+    ) as output_handle:
+        for line_number, line in enumerate(input_handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            source_record_count += 1
+            record = json.loads(stripped)
+            try:
+                parsed = _parse_sharegpt_dpo_record(record, line_number)
+            except ValueError as exc:
+                if not skip_invalid:
+                    raise
+                skipped_records.append({"source_line": line_number, "error": str(exc)})
+                continue
+            output_handle.write(json.dumps(parsed, ensure_ascii=False) + "\n")
+            dpo_record_count += 1
+
+    manifest = {
+        "source_benchmark": "sciimpact",
+        "label_source": "sciimpact_sft",
+        "source_path": str(source),
+        "output_path": str(destination),
+        "source_record_count": source_record_count,
+        "dpo_record_count": dpo_record_count,
+        "skipped_record_count": len(skipped_records),
+        "skipped_records": skipped_records[:20],
+    }
+    (destination.parent / "sciimpact_dpo_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def _parse_pair(record: dict[str, Any], line_number: int) -> dict[str, dict[str, Any]]:
     if isinstance(record.get("conversations"), list):
         return _parse_sharegpt_pair(record, line_number)
@@ -177,6 +227,38 @@ def _parse_sharegpt_pair(record: dict[str, Any], line_number: int) -> dict[str, 
     }
 
 
+def _parse_sharegpt_dpo_record(record: dict[str, Any], line_number: int) -> dict[str, Any]:
+    if not isinstance(record.get("conversations"), list):
+        raise ValueError(f"SciImpact DPO record on line {line_number} is not ShareGPT SFT")
+    conversations = record["conversations"]
+    system = _conversation_value(conversations, "system")
+    human = _conversation_value(conversations, "human")
+    answer = _conversation_value(conversations, "gpt")
+    if human is None or answer is None:
+        raise ValueError(f"SciImpact SFT record on line {line_number} is missing human/gpt text")
+
+    parsed_pair = _parse_sharegpt_pair(record, line_number)
+    rejected_answer = _flip_sft_answer(answer, line_number)
+    prompt_messages = []
+    if system is not None:
+        prompt_messages.append({"from": "system", "value": system})
+    prompt_messages.append({"from": "human", "value": human})
+    return {
+        "conversations": prompt_messages,
+        "chosen": {"from": "gpt", "value": answer},
+        "rejected": {"from": "gpt", "value": rejected_answer},
+        "target_paper_id": f"sciimpact:{line_number}",
+        "chosen_reference_id": parsed_pair["winner"]["paper_id"],
+        "rejected_reference_id": parsed_pair["loser"]["paper_id"],
+        "winner_id": parsed_pair["winner"]["paper_id"],
+        "loser_id": parsed_pair["loser"]["paper_id"],
+        "impact_dimension": parsed_pair["impact_dimension"],
+        "item_type": parsed_pair["item_type"],
+        "label_source": "sciimpact_sft",
+        "source_line": line_number,
+    }
+
+
 def _conversation_value(conversations: list[Any], role: str) -> str | None:
     for message in conversations:
         if not isinstance(message, dict):
@@ -231,6 +313,14 @@ def _parse_sft_winner(answer: str, line_number: int) -> str:
     if match is None:
         raise ValueError(f"SciImpact SFT record on line {line_number} has no A/B answer")
     return match.group(1).lower()
+
+
+def _flip_sft_answer(answer: str, line_number: int) -> str:
+    match = re.search(r"\b(Paper|Dataset|Model|GitHub repo)\s+([AB])\b", answer, re.IGNORECASE)
+    if match is None:
+        raise ValueError(f"SciImpact SFT record on line {line_number} has no A/B answer")
+    replacement_side = "B" if match.group(2).upper() == "A" else "A"
+    return answer[: match.start(2)] + replacement_side + answer[match.end(2) :]
 
 
 def _infer_sft_impact_dimension(text: str) -> str:

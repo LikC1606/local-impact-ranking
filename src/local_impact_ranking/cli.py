@@ -96,7 +96,10 @@ from local_impact_ranking.scoring import (
     scoring_config,
 )
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
-from local_impact_ranking.sciimpact_adapter import convert_sciimpact_jsonl
+from local_impact_ranking.sciimpact_adapter import (
+    convert_sciimpact_jsonl,
+    export_sciimpact_dpo_jsonl,
+)
 from local_impact_ranking.sciimpact_baseline import write_sciimpact_text_baseline_rankings
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
@@ -555,6 +558,21 @@ def benchmarks_convert_sciimpact(
     )
     if manifest["skipped_pair_count"]:
         typer.echo(f"Skipped {manifest['skipped_pair_count']} invalid SciImpact rows")
+
+
+@benchmarks_app.command("export-sciimpact-dpo")
+def benchmarks_export_sciimpact_dpo(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
+) -> None:
+    manifest = export_sciimpact_dpo_jsonl(input, output, skip_invalid=not strict)
+    typer.echo(
+        "Wrote "
+        f"{manifest['dpo_record_count']} SciImpact DPO preference records to {output}"
+    )
+    if manifest["skipped_record_count"]:
+        typer.echo(f"Skipped {manifest['skipped_record_count']} invalid SciImpact rows")
 
 
 @benchmarks_app.command("convert-prescience")
