@@ -20,5 +20,8 @@ jobs:
       - name: Install package
         run: python -m pip install -e ".[dev]"
 
-      - name: Run tests
-        run: pytest -q
+      - name: Run publish checks
+        run: scripts/check_publish_ready.sh
+
+      - name: Run quickstart smoke
+        run: scripts/run_quickstart.sh runs/quickstart

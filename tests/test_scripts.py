@@ -95,6 +95,34 @@ def test_run_local_smoke_script_runs_heuristic_examples_and_checks_context_weigh
     assert 'grep -q "1,r1,1.500000" "${OUTPUT}/context/rankings/papers.csv"' in script
 
 
+def test_run_quickstart_script_runs_no_gpu_end_to_end_demo():
+    script = Path("scripts/run_quickstart.sh").read_text(encoding="utf-8")
+
+    assert 'OUTPUT="${1:-runs/quickstart}"' in script
+    assert "doctor" in script
+    assert '--output "${OUTPUT}/doctor"' in script
+    assert "run" in script
+    assert "--input examples/context_papers.jsonl" in script
+    assert "score-card" in script
+    assert "entity-resolution-report" in script
+    assert "report-bundle" in script
+    assert "runs-index" in script
+    assert 'test -s "${OUTPUT}/run/reports/score_cards.md"' in script
+    assert 'test -s "${OUTPUT}/run/reports/entity_resolution_report.md"' in script
+    assert 'test -s "${OUTPUT}/score_cards/score_cards.md"' in script
+    assert 'test -s "${OUTPUT}/entity_resolution/entity_resolution_report.md"' in script
+    assert 'test -s "${OUTPUT}/run/report_bundle/bundle_manifest.json"' in script
+    assert 'test -s "${OUTPUT}/runs_index/index.md"' in script
+
+
+def test_github_actions_runs_publish_check_and_quickstart_smoke():
+    workflow = Path(".github/workflows/tests.yml").read_text(encoding="utf-8")
+
+    assert "scripts/check_publish_ready.sh" in workflow
+    assert "scripts/run_quickstart.sh" in workflow
+    assert "runs/quickstart" in workflow
+
+
 def test_compare_model_judges_script_runs_base_candidate_and_reports_deltas():
     script = Path("scripts/compare_model_judges.sh").read_text(encoding="utf-8")
 
@@ -198,6 +226,7 @@ def test_check_publish_ready_script_blocks_local_outputs_and_runs_tests():
     script = Path("scripts/check_publish_ready.sh").read_text(encoding="utf-8")
 
     assert "git check-ignore data models runs" in script
+    assert "scripts/run_quickstart.sh" in script
     assert "git ls-files data models runs" in script
     assert "pytest -q" in script
     assert "docs/publish-checklist.md" in script

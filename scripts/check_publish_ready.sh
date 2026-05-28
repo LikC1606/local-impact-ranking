@@ -11,6 +11,7 @@ test -f docs/input-schema.md
 test -f docs/scoring-method.md
 test -f docs/evaluation-method.md
 test -f docs/publish-checklist.md
+test -f scripts/run_quickstart.sh
 
 git check-ignore data models runs >/dev/null
 
@@ -22,6 +23,7 @@ fi
 
 grep -q "report-bundle" README.md
 grep -q "dataset-local" README.md
+grep -q "run_quickstart.sh" README.md
 grep -q "data/" docs/publish-checklist.md
 grep -q "models/" docs/publish-checklist.md
 grep -q "runs/" docs/publish-checklist.md

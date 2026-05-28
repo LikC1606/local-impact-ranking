@@ -37,6 +37,14 @@ PYTHONPATH=src python -m local_impact_ranking.cli doctor --output runs/doctor
 
 The second command writes `doctor.json` and `doctor.md` with Python, Git, optional `gh`, required-file, and publish-safety checks.
 
+Run the no-GPU quickstart to verify the full local example pipeline:
+
+```bash
+scripts/run_quickstart.sh runs/quickstart
+```
+
+It runs `doctor`, the context-weighted heuristic example, score cards, entity-resolution diagnostics, a report bundle, and a runs index.
+
 ## Input
 
 Use JSONL with one paper per line:

@@ -109,6 +109,7 @@ def test_readme_documents_final_operational_commands():
     assert "score-card" in text
     assert "entity-resolution-report" in text
     assert "split-prescience" in text
+    assert "run_quickstart.sh" in text
 
 
 def test_publish_checklist_documents_github_release_boundaries():
