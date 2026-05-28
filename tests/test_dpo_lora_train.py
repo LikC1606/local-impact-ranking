@@ -44,6 +44,33 @@ def test_load_preference_examples_reads_sharegpt_dpo_jsonl(tmp_path):
     assert examples[0].target_paper_id == "p1"
 
 
+def test_load_preference_examples_keeps_multi_message_prompt(tmp_path):
+    dataset = tmp_path / "preferences.jsonl"
+    dataset.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "system", "value": "Reply with Paper A or Paper B."},
+                    {"from": "human", "value": "Paper A: Alpha. Paper B: Beta."},
+                ],
+                "chosen": {"from": "gpt", "value": "Paper A."},
+                "rejected": {"from": "gpt", "value": "Paper B."},
+                "target_paper_id": "pair-1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    examples = load_preference_examples([dataset], limit=10)
+
+    assert len(examples) == 1
+    assert examples[0].prompt == (
+        "System: Reply with Paper A or Paper B.\n"
+        "Human: Paper A: Alpha. Paper B: Beta."
+    )
+
+
 def test_load_preference_examples_filters_invalid_and_reverse_conflicting_pairs(tmp_path):
     dataset = tmp_path / "preferences.jsonl"
     records = [

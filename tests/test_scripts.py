@@ -215,6 +215,17 @@ def test_run_sciimpact_dpo_export_smoke_script_exports_and_validates_preferences
     assert "loaded_example_count" in script
 
 
+def test_run_sciimpact_prediction_eval_smoke_script_evaluates_oracle_predictions():
+    script = Path("scripts/run_sciimpact_prediction_eval_smoke.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl}"' in script
+    assert 'LIMIT="${LIMIT:-200}"' in script
+    assert "oracle_predictions.jsonl" in script
+    assert "evaluate-sciimpact-predictions" in script
+    assert 'test -s "${OUTPUT}/model_eval/sciimpact_model_eval.json"' in script
+    assert 'if [[ "${accuracy}" != "1.000" ]]; then' in script
+
+
 def test_download_prescience_sample_script_streams_from_mirror():
     script = Path("scripts/download_prescience_sample.sh").read_text(encoding="utf-8")
 

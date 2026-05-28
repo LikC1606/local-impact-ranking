@@ -109,10 +109,7 @@ def _preference_example_from_record(record: dict[str, Any]) -> PreferenceExample
     conversations = record.get("conversations")
     if not isinstance(conversations, list) or not conversations:
         return None
-    first_message = conversations[0]
-    if not isinstance(first_message, dict):
-        return None
-    prompt = first_message.get("value")
+    prompt = _prompt_from_conversations(conversations)
     chosen = record.get("chosen", {}).get("value")
     rejected = record.get("rejected", {}).get("value")
     if not isinstance(prompt, str) or not isinstance(chosen, str) or not isinstance(rejected, str):
@@ -128,6 +125,21 @@ def _preference_example_from_record(record: dict[str, Any]) -> PreferenceExample
         rejected=rejected,
         target_paper_id=str(target_paper_id) if target_paper_id is not None else None,
     )
+
+
+def _prompt_from_conversations(conversations: list[Any]) -> str | None:
+    messages: list[tuple[str, str]] = []
+    for message in conversations:
+        if not isinstance(message, dict):
+            return None
+        role = message.get("from")
+        value = message.get("value")
+        if not isinstance(role, str) or not isinstance(value, str) or not value.strip():
+            return None
+        messages.append((role, value.strip()))
+    if len(messages) == 1:
+        return messages[0][1]
+    return "\n".join(f"{role.title()}: {value}" for role, value in messages)
 
 
 def tokenize_prompt_response(

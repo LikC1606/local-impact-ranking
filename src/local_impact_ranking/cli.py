@@ -101,6 +101,7 @@ from local_impact_ranking.sciimpact_adapter import (
     export_sciimpact_dpo_jsonl,
 )
 from local_impact_ranking.sciimpact_baseline import write_sciimpact_text_baseline_rankings
+from local_impact_ranking.sciimpact_model_eval import evaluate_sciimpact_predictions
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
     score_cards_from_evidence_report,
@@ -1071,6 +1072,20 @@ def sciimpact_text_baseline(
     typer.echo(
         "Wrote SciImpact text baseline rankings for "
         f"{manifest['paper_count']} papers to {output}"
+    )
+
+
+@app.command("evaluate-sciimpact-predictions")
+def evaluate_sciimpact_predictions_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    predictions: Path = typer.Option(..., "--predictions", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    report = evaluate_sciimpact_predictions(sft, predictions, output)
+    typer.echo(
+        "Wrote SciImpact prediction evaluation to "
+        f"{output} (accuracy={report['summary']['accuracy']:.3f}, "
+        f"coverage_rate={report['summary']['coverage_rate']:.3f})"
     )
 
 

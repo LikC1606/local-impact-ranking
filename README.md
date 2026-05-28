@@ -261,6 +261,21 @@ scripts/run_sciimpact_dpo_export_smoke.sh runs/sciimpact-dpo-export
 
 On the downloaded SciImpact train split, this writes 87,984 clean DPO preference records and skips 531 malformed rows. The output file is `finetuning/sciimpact_dpo_preferences.jsonl`, which can be passed to `validate-dpo-data` and then to `train-dpo`.
 
+Evaluate local-model predictions against SciImpact SFT answers:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-sciimpact-predictions \
+  --sft data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl \
+  --predictions runs/my-sciimpact-model/predictions.jsonl \
+  --output runs/my-sciimpact-model/eval
+```
+
+The predictions file is JSONL with `source_line` and `prediction`. Run the oracle smoke to verify the evaluator:
+
+```bash
+scripts/run_sciimpact_prediction_eval_smoke.sh runs/sciimpact-prediction-eval-smoke
+```
+
 Evaluate an existing paper ranking against pairwise impact labels:
 
 ```bash
