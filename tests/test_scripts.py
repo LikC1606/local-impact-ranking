@@ -226,6 +226,19 @@ def test_run_sciimpact_prediction_eval_smoke_script_evaluates_oracle_predictions
     assert 'if [[ "${accuracy}" != "1.000" ]]; then' in script
 
 
+def test_run_sciimpact_model_eval_script_generates_predictions_and_evaluates():
+    script = Path("scripts/run_sciimpact_model_eval.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl}"' in script
+    assert 'BASE_URL="${BASE_URL:-http://localhost:8000/v1}"' in script
+    assert 'MODEL="${MODEL:-local-impact-judge}"' in script
+    assert 'scripts/check_model_server.sh "${BASE_URL}"' in script
+    assert "generate-sciimpact-predictions" in script
+    assert "evaluate-sciimpact-predictions" in script
+    assert 'test -s "${OUTPUT}/predictions.jsonl"' in script
+    assert 'test -s "${OUTPUT}/eval/sciimpact_model_eval.json"' in script
+
+
 def test_download_prescience_sample_script_streams_from_mirror():
     script = Path("scripts/download_prescience_sample.sh").read_text(encoding="utf-8")
 

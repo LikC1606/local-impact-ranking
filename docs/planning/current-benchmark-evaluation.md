@@ -87,6 +87,13 @@ LIMIT=88515 scripts/run_sciimpact_dpo_export_smoke.sh runs/sciimpact-dpo-export
 {"source_line": 1, "prediction": "Paper A won the best paper award."}
 ```
 
+With an already running OpenAI-compatible local model server:
+
+```bash
+BASE_URL=http://localhost:8000/v1 MODEL=local-impact-judge LIMIT=200 \
+  scripts/run_sciimpact_model_eval.sh runs/sciimpact-model-eval
+```
+
 4. Evaluate model answers:
 
 ```bash

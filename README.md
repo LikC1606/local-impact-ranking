@@ -278,6 +278,13 @@ The predictions file is JSONL with `source_line` and `prediction`. Run the oracl
 scripts/run_sciimpact_prediction_eval_smoke.sh runs/sciimpact-prediction-eval-smoke
 ```
 
+If a local OpenAI-compatible model server is already running, generate predictions and evaluate them in one step:
+
+```bash
+BASE_URL=http://localhost:8000/v1 MODEL=local-impact-judge LIMIT=200 \
+  scripts/run_sciimpact_model_eval.sh runs/sciimpact-model-eval
+```
+
 Evaluate an existing paper ranking against pairwise impact labels:
 
 ```bash

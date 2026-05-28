@@ -101,7 +101,10 @@ from local_impact_ranking.sciimpact_adapter import (
     export_sciimpact_dpo_jsonl,
 )
 from local_impact_ranking.sciimpact_baseline import write_sciimpact_text_baseline_rankings
-from local_impact_ranking.sciimpact_model_eval import evaluate_sciimpact_predictions
+from local_impact_ranking.sciimpact_model_eval import (
+    evaluate_sciimpact_predictions,
+    generate_sciimpact_predictions,
+)
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
     score_cards_from_evidence_report,
@@ -1086,6 +1089,38 @@ def evaluate_sciimpact_predictions_cmd(
         "Wrote SciImpact prediction evaluation to "
         f"{output} (accuracy={report['summary']['accuracy']:.3f}, "
         f"coverage_rate={report['summary']['coverage_rate']:.3f})"
+    )
+
+
+@app.command("generate-sciimpact-predictions")
+def generate_sciimpact_predictions_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    base_url: str = typer.Option("http://localhost:8000/v1", "--base-url"),
+    model: str = typer.Option(..., "--model"),
+    api_key: str = typer.Option("EMPTY", "--api-key"),
+    timeout: float = typer.Option(120.0, "--timeout"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    max_tokens: int | None = typer.Option(32, "--max-tokens", min=1),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    resume: bool = typer.Option(True, "--resume/--overwrite"),
+) -> None:
+    manifest = generate_sciimpact_predictions(
+        sft,
+        output,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        limit=limit,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['written_prediction_count']} SciImpact predictions to {output} "
+        f"(skipped_existing={manifest['skipped_existing_count']})"
     )
 
 
