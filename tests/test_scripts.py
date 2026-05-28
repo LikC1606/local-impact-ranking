@@ -118,6 +118,9 @@ def test_run_quickstart_script_runs_no_gpu_end_to_end_demo():
 def test_github_actions_runs_publish_check_and_quickstart_smoke():
     workflow = Path(".github/workflows/tests.yml").read_text(encoding="utf-8")
 
+    assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true" in workflow
+    assert "actions/checkout@v6" in workflow
+    assert "actions/setup-python@v6" in workflow
     assert "scripts/check_publish_ready.sh" in workflow
     assert "scripts/run_quickstart.sh" in workflow
     assert "runs/quickstart" in workflow
