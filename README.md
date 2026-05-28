@@ -231,7 +231,19 @@ PYTHONPATH=src python -m local_impact_ranking.cli benchmarks convert-sciimpact \
   --output data/sciimpact/train
 ```
 
-The adapter writes `papers.jsonl`, `pairwise_labels.jsonl`, and `manifest.json`. It accepts common pair formats such as `chosen/rejected`, `positive/negative`, and `paper_a/paper_b + winner`.
+The adapter writes `papers.jsonl`, `pairwise_labels.jsonl`, and `manifest.json`. It accepts common pair formats such as `chosen/rejected`, `positive/negative`, and `paper_a/paper_b + winner`. It also parses the official SciImpact ShareGPT/SFT files, including:
+
+- `data/sciimpact/source/sft_data/paper_impact_sft_train_clean.jsonl`
+- `data/sciimpact/source/sft_data/paper_impact_sft_val_clean.jsonl`
+- `data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl`
+
+The CLI skips malformed SciImpact rows by default and records `skipped_pair_count` plus sample errors in `manifest.json`. Use `--strict` when you want conversion to fail on the first malformed row.
+
+Run a small official-SFT conversion smoke after downloading SciImpact:
+
+```bash
+scripts/run_sciimpact_sft_smoke.sh runs/sciimpact-sft-smoke
+```
 
 Evaluate an existing paper ranking against pairwise impact labels:
 

@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from local_impact_ranking.cli import app
@@ -78,6 +79,151 @@ def test_convert_sciimpact_jsonl_writes_papers_labels_and_manifest(tmp_path):
     assert {label["source_benchmark"] for label in labels} == {"sciimpact"}
 
 
+def test_convert_sciimpact_sharegpt_sft_writes_pairwise_labels(tmp_path):
+    source = tmp_path / "sciimpact_sft.jsonl"
+    output = tmp_path / "sciimpact_sft"
+    rows = [
+        {
+            "conversations": [
+                {
+                    "from": "system",
+                    "value": (
+                        "You are an impartial paper reviewer. Given the titles and abstracts "
+                        "of two papers, identify which paper won the Best Paper award."
+                    ),
+                },
+                {
+                    "from": "human",
+                    "value": (
+                        "Two papers are nominated for the Best Paper award. "
+                        "Paper A: Title: Alpha System Abstract: Alpha introduces a broad system. "
+                        "Paper B: Title: Beta Baseline Abstract: Beta is a narrower baseline. "
+                        "Which paper should win the Best Paper award?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper A won the best paper award."},
+            ]
+        },
+        {
+            "conversations": [
+                {
+                    "from": "system",
+                    "value": (
+                        "You are an impartial paper reviewer. Given two papers, identify "
+                        "which paper has more citations."
+                    ),
+                },
+                {
+                    "from": "human",
+                    "value": (
+                        "Paper A: Title: Low Cited Paper Abstract: Low cited abstract. "
+                        "Paper B: Title: High Cited Paper Abstract: High cited abstract. "
+                        "Which paper has more citations?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper B has more citations."},
+            ]
+        },
+    ]
+    source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    manifest = convert_sciimpact_jsonl(source, output)
+
+    assert manifest["pair_count"] == 2
+    assert manifest["paper_count"] == 4
+    papers = load_papers_jsonl(output / "papers.jsonl")
+    papers_by_title = {paper.title: paper for paper in papers}
+    assert papers_by_title["Alpha System"].abstract == "Alpha introduces a broad system."
+    assert papers_by_title["High Cited Paper"].abstract == "High cited abstract."
+    assert papers_by_title["Alpha System"].paper_id.startswith("sciimpact:")
+
+    labels = [
+        json.loads(line)
+        for line in (output / "pairwise_labels.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert labels[0]["winner_id"] == papers_by_title["Alpha System"].paper_id
+    assert labels[0]["loser_id"] == papers_by_title["Beta Baseline"].paper_id
+    assert labels[0]["impact_dimension"] == "award"
+    assert labels[1]["winner_id"] == papers_by_title["High Cited Paper"].paper_id
+    assert labels[1]["loser_id"] == papers_by_title["Low Cited Paper"].paper_id
+    assert labels[1]["impact_dimension"] == "citation"
+
+
+def test_convert_sciimpact_can_skip_invalid_sft_rows_with_manifest_report(tmp_path):
+    source = tmp_path / "sciimpact_sft_invalid.jsonl"
+    output = tmp_path / "sciimpact_sft_invalid"
+    rows = [
+        {
+            "conversations": [
+                {
+                    "from": "system",
+                    "value": "Given two papers, identify which paper has more citations.",
+                },
+                {
+                    "from": "human",
+                    "value": (
+                        "Paper A: Title: Broken Row Abstract: This row is missing Paper B. "
+                        "Which paper has more citations?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper B has more citations."},
+            ]
+        },
+        {
+            "conversations": [
+                {
+                    "from": "system",
+                    "value": "Given two papers, identify which paper has more citations.",
+                },
+                {
+                    "from": "human",
+                    "value": (
+                        "Paper A: Title: Lower Impact Abstract: Lower impact text. "
+                        "Paper B: Title: Higher Impact Abstract: Higher impact text. "
+                        "Which paper has more citations?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper B has more citations."},
+            ]
+        },
+    ]
+    source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    manifest = convert_sciimpact_jsonl(source, output, skip_invalid=True)
+
+    assert manifest["source_record_count"] == 2
+    assert manifest["pair_count"] == 1
+    assert manifest["skipped_pair_count"] == 1
+    assert manifest["skipped_pairs"][0]["source_line"] == 1
+    assert "no supported A/B markers" in manifest["skipped_pairs"][0]["error"]
+
+    labels = [
+        json.loads(line)
+        for line in (output / "pairwise_labels.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert labels[0]["winner_id"].endswith(":b")
+
+
+def test_convert_sciimpact_is_strict_by_default_for_invalid_rows(tmp_path):
+    source = tmp_path / "sciimpact_sft_invalid.jsonl"
+    output = tmp_path / "sciimpact_sft_invalid"
+    source.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "human", "value": "Paper A: Title: Broken Abstract: Missing B."},
+                    {"from": "gpt", "value": "Paper B has more citations."},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="no supported A/B markers"):
+        convert_sciimpact_jsonl(source, output)
+
+
 def test_cli_benchmarks_convert_sciimpact_writes_local_pairwise_files(tmp_path):
     source = tmp_path / "sciimpact.jsonl"
     output = tmp_path / "sciimpact"
@@ -99,3 +245,39 @@ def test_cli_benchmarks_convert_sciimpact_writes_local_pairwise_files(tmp_path):
     assert "Wrote 3 SciImpact pairs" in result.output
     assert (output / "papers.jsonl").exists()
     assert (output / "pairwise_labels.jsonl").exists()
+
+
+def test_cli_benchmarks_convert_sciimpact_skips_invalid_rows_by_default(tmp_path):
+    source = tmp_path / "sciimpact_invalid.jsonl"
+    output = tmp_path / "sciimpact_invalid"
+    source.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "human", "value": "Paper A: Title: Broken Abstract: Missing B."},
+                    {"from": "gpt", "value": "Paper B has more citations."},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "benchmarks",
+            "convert-sciimpact",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Skipped 1 invalid SciImpact rows" in result.output
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_record_count"] == 1
+    assert manifest["pair_count"] == 0
+    assert manifest["skipped_pair_count"] == 1

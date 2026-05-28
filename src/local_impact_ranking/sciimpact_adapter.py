@@ -1,24 +1,51 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+_SFT_ITEM_MARKERS = (
+    ("paper", "Paper A:", "Paper B:"),
+    ("dataset", "Dataset A:", "Dataset B:"),
+    ("github_repo", "GitHub repo A README:", "GitHub repo B README:"),
+    ("model", "Model A:", "Model B:"),
+)
 
-def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
+
+def convert_sciimpact_jsonl(
+    input_path: str | Path,
+    output_dir: str | Path,
+    *,
+    skip_invalid: bool = False,
+) -> dict[str, Any]:
     source = Path(input_path)
     destination = Path(output_dir)
     papers: OrderedDict[str, dict[str, Any]] = OrderedDict()
     labels: list[dict[str, Any]] = []
+    skipped_pairs: list[dict[str, Any]] = []
+    source_record_count = 0
 
     with source.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             stripped = line.strip()
             if not stripped:
                 continue
+            source_record_count += 1
             record = json.loads(stripped)
-            parsed = _parse_pair(record, line_number)
+            try:
+                parsed = _parse_pair(record, line_number)
+            except ValueError as exc:
+                if not skip_invalid:
+                    raise
+                skipped_pairs.append(
+                    {
+                        "source_line": line_number,
+                        "error": str(exc),
+                    }
+                )
+                continue
             winner = parsed["winner"]
             loser = parsed["loser"]
             winner_id = _paper_id(winner, f"line-{line_number}-winner")
@@ -27,8 +54,9 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
             impact_dimension = _first_string(
                 record,
                 ("impact_dimension", "dimension", "impact_type", "category", "task"),
-            )
+            ) or parsed.get("impact_dimension")
             field = _first_string(record, ("field", "domain", "discipline", "subject"))
+            item_type = parsed.get("item_type")
 
             _upsert_paper(
                 papers,
@@ -38,6 +66,7 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
                 role="winner",
                 impact_dimension=impact_dimension,
                 field=field,
+                item_type=item_type,
             )
             _upsert_paper(
                 papers,
@@ -47,6 +76,7 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
                 role="loser",
                 impact_dimension=impact_dimension,
                 field=field,
+                item_type=item_type,
             )
             labels.append(
                 {
@@ -55,6 +85,7 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
                     "loser_id": loser_id,
                     "impact_dimension": impact_dimension or "unknown",
                     "field": field or "unknown",
+                    "item_type": item_type or "paper",
                     "source_benchmark": "sciimpact",
                     "source_line": line_number,
                 }
@@ -73,8 +104,11 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
     manifest = {
         "source_benchmark": "sciimpact",
         "source_path": str(source),
+        "source_record_count": source_record_count,
         "paper_count": len(papers),
         "pair_count": len(labels),
+        "skipped_pair_count": len(skipped_pairs),
+        "skipped_pairs": skipped_pairs[:20],
         "papers_path": str(papers_path),
         "pairwise_labels_path": str(labels_path),
     }
@@ -86,6 +120,8 @@ def convert_sciimpact_jsonl(input_path: str | Path, output_dir: str | Path) -> d
 
 
 def _parse_pair(record: dict[str, Any], line_number: int) -> dict[str, dict[str, Any]]:
+    if isinstance(record.get("conversations"), list):
+        return _parse_sharegpt_pair(record, line_number)
     if isinstance(record.get("chosen"), dict) and isinstance(record.get("rejected"), dict):
         return {"winner": record["chosen"], "loser": record["rejected"]}
     if isinstance(record.get("positive"), dict) and isinstance(record.get("negative"), dict):
@@ -111,6 +147,154 @@ def _parse_pair(record: dict[str, Any], line_number: int) -> dict[str, dict[str,
     raise ValueError(f"SciImpact record on line {line_number} is not a supported pair")
 
 
+def _parse_sharegpt_pair(record: dict[str, Any], line_number: int) -> dict[str, Any]:
+    conversations = record["conversations"]
+    system = _conversation_value(conversations, "system")
+    human = _conversation_value(conversations, "human")
+    answer = _conversation_value(conversations, "gpt")
+    if human is None or answer is None:
+        raise ValueError(f"SciImpact SFT record on line {line_number} is missing human/gpt text")
+
+    item_type, paper_a, paper_b = _parse_sft_items(human, line_number)
+    winner_key = _parse_sft_winner(answer, line_number)
+    impact_dimension = _infer_sft_impact_dimension(system or human)
+
+    paper_a["paper_id"] = _sft_paper_id(line_number, "a")
+    paper_b["paper_id"] = _sft_paper_id(line_number, "b")
+    paper_a.setdefault("metadata", {})["sciimpact_item_type"] = item_type
+    paper_b.setdefault("metadata", {})["sciimpact_item_type"] = item_type
+
+    if winner_key == "a":
+        winner, loser = paper_a, paper_b
+    else:
+        winner, loser = paper_b, paper_a
+    return {
+        "winner": winner,
+        "loser": loser,
+        "impact_dimension": impact_dimension,
+        "item_type": item_type,
+    }
+
+
+def _conversation_value(conversations: list[Any], role: str) -> str | None:
+    for message in conversations:
+        if not isinstance(message, dict):
+            continue
+        if message.get("from") == role:
+            return _optional_string(message.get("value"))
+    return None
+
+
+def _parse_sft_items(human_prompt: str, line_number: int) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    for item_type, marker_a, marker_b in _SFT_ITEM_MARKERS:
+        if marker_a not in human_prompt or marker_b not in human_prompt:
+            continue
+        before_b, raw_b = human_prompt.split(marker_b, 1)
+        _, raw_a = before_b.split(marker_a, 1)
+        return (
+            item_type,
+            _sft_item_record(raw_a, item_type),
+            _sft_item_record(raw_b, item_type),
+        )
+    raise ValueError(f"SciImpact SFT record on line {line_number} has no supported A/B markers")
+
+
+def _sft_item_record(raw_text: str, item_type: str) -> dict[str, Any]:
+    text = _strip_sft_question_suffix(raw_text)
+    if item_type == "paper":
+        title = _extract_between(text, "Title:", ("Year:", "Abstract:"))
+        abstract = _extract_after(text, "Abstract:")
+        year_text = _extract_between(text, "Year:", ("Abstract:",))
+        return {
+            "title": title or "Untitled SciImpact paper",
+            "abstract": abstract,
+            "year": _optional_int(year_text),
+            "metadata": {"sciimpact_raw_text": text},
+        }
+    if item_type in {"dataset", "model"}:
+        name = _extract_between(text, "Name:", ("\n",))
+        return {
+            "title": name or _first_nonempty_line(text) or f"Untitled SciImpact {item_type}",
+            "abstract": text,
+            "metadata": {"sciimpact_raw_text": text},
+        }
+    return {
+        "title": _first_nonempty_line(text) or "Untitled SciImpact GitHub repo",
+        "abstract": text,
+        "metadata": {"sciimpact_raw_text": text},
+    }
+
+
+def _parse_sft_winner(answer: str, line_number: int) -> str:
+    match = re.search(r"\b(?:Paper|Dataset|Model|GitHub repo)\s+([AB])\b", answer, re.IGNORECASE)
+    if match is None:
+        raise ValueError(f"SciImpact SFT record on line {line_number} has no A/B answer")
+    return match.group(1).lower()
+
+
+def _infer_sft_impact_dimension(text: str) -> str:
+    lowered = text.lower()
+    if "citation" in lowered:
+        return "citation"
+    if "media mention" in lowered:
+        return "media"
+    if "patent" in lowered:
+        return "patent"
+    if "download" in lowered:
+        return "downloads"
+    if "star" in lowered:
+        return "stars"
+    if "best paper" in lowered or "nobel" in lowered or "award" in lowered:
+        return "award"
+    return "unknown"
+
+
+def _strip_sft_question_suffix(text: str) -> str:
+    suffix_patterns = (
+        r"\s+Which paper\b.*$",
+        r"\s+Which dataset\b.*$",
+        r"\s+Which repository\b.*$",
+        r"\s+Which model\b.*$",
+        r"\s+Reply with exactly one sentence\b.*$",
+    )
+    stripped = text.strip()
+    for pattern in suffix_patterns:
+        stripped = re.sub(pattern, "", stripped, flags=re.IGNORECASE | re.DOTALL).strip()
+    return stripped
+
+
+def _extract_between(text: str, start_marker: str, end_markers: tuple[str, ...]) -> str | None:
+    start = text.find(start_marker)
+    if start < 0:
+        return None
+    value_start = start + len(start_marker)
+    value_end = len(text)
+    for marker in end_markers:
+        marker_index = text.find(marker, value_start)
+        if marker_index >= 0:
+            value_end = min(value_end, marker_index)
+    return _optional_string(text[value_start:value_end])
+
+
+def _extract_after(text: str, marker: str) -> str | None:
+    marker_index = text.find(marker)
+    if marker_index < 0:
+        return None
+    return _optional_string(text[marker_index + len(marker) :])
+
+
+def _first_nonempty_line(text: str) -> str | None:
+    for line in text.splitlines():
+        value = _optional_string(line)
+        if value is not None:
+            return value
+    return _optional_string(text)
+
+
+def _sft_paper_id(line_number: int, side: str) -> str:
+    return f"sciimpact:sft:{line_number}:{side}"
+
+
 def _upsert_paper(
     papers: OrderedDict[str, dict[str, Any]],
     source: dict[str, Any],
@@ -120,8 +304,10 @@ def _upsert_paper(
     role: str,
     impact_dimension: str | None,
     field: str | None,
+    item_type: str | None,
 ) -> None:
     if paper_id not in papers:
+        source_metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
         papers[paper_id] = {
             "paper_id": paper_id,
             "title": _title(source, paper_id),
@@ -136,7 +322,9 @@ def _upsert_paper(
                 "sciimpact_roles": [],
                 "sciimpact_impact_dimensions": [],
                 "sciimpact_fields": [],
+                "sciimpact_item_types": [],
                 "external_ids": _external_ids(source),
+                **source_metadata,
             },
         }
     paper = papers[paper_id]
@@ -147,6 +335,8 @@ def _upsert_paper(
         _append_once(metadata["sciimpact_impact_dimensions"], impact_dimension)
     if field is not None:
         _append_once(metadata["sciimpact_fields"], field)
+    if item_type is not None:
+        _append_once(metadata["sciimpact_item_types"], item_type)
 
 
 def _paper_id(source: dict[str, Any], fallback: str) -> str:

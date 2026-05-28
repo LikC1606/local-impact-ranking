@@ -544,13 +544,16 @@ def benchmarks_convert_scicite(
 def benchmarks_convert_sciimpact(
     input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
     output: Path = typer.Option(..., "--output", "-o"),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
 ) -> None:
-    manifest = convert_sciimpact_jsonl(input, output)
+    manifest = convert_sciimpact_jsonl(input, output, skip_invalid=not strict)
     typer.echo(
         "Wrote "
         f"{manifest['pair_count']} SciImpact pairs and "
         f"{manifest['paper_count']} papers to {output}"
     )
+    if manifest["skipped_pair_count"]:
+        typer.echo(f"Skipped {manifest['skipped_pair_count']} invalid SciImpact rows")
 
 
 @benchmarks_app.command("convert-prescience")

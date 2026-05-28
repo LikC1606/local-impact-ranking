@@ -174,6 +174,20 @@ def test_run_sciimpact_smoke_script_converts_and_evaluates_pairwise_fixture():
     assert 'test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.md"' in script
 
 
+def test_run_sciimpact_sft_smoke_script_converts_official_sft_sample():
+    script = Path("scripts/run_sciimpact_sft_smoke.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl}"' in script
+    assert 'LIMIT="${LIMIT:-200}"' in script
+    assert 'sed -n "1,${LIMIT}p" "${INPUT}" > "${OUTPUT}/input.jsonl"' in script
+    assert "benchmarks convert-sciimpact" in script
+    assert 'test -s "${OUTPUT}/converted/papers.jsonl"' in script
+    assert 'test -s "${OUTPUT}/converted/pairwise_labels.jsonl"' in script
+    assert 'test -s "${OUTPUT}/converted/manifest.json"' in script
+    assert 'grep -q \'"skipped_pair_count"\' "${OUTPUT}/converted/manifest.json"' in script
+    assert 'pair_count="$(wc -l < "${OUTPUT}/converted/pairwise_labels.jsonl" | tr -d \' \')"' in script
+
+
 def test_download_prescience_sample_script_streams_from_mirror():
     script = Path("scripts/download_prescience_sample.sh").read_text(encoding="utf-8")
 
