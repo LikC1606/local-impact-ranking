@@ -245,6 +245,14 @@ Run a small official-SFT conversion smoke after downloading SciImpact:
 scripts/run_sciimpact_sft_smoke.sh runs/sciimpact-sft-smoke
 ```
 
+Run a no-GPU text-prior baseline on an official SciImpact SFT prefix:
+
+```bash
+LIMIT=1000 scripts/run_sciimpact_sft_baseline.sh runs/sciimpact-sft-baseline
+```
+
+This converts the SFT prefix, writes `rankings/sciimpact_text_prior.csv`, and evaluates it with `evaluate-pairwise-impact`. On the full downloaded SciImpact test split, this simple baseline reached `pairwise_accuracy=0.494`, `non_tie_pairwise_accuracy=0.507`, and `coverage_rate=1.000` after skipping 396 malformed rows; treat it as a lower bound for local model fine-tuning, not as the final model result.
+
 Evaluate an existing paper ranking against pairwise impact labels:
 
 ```bash

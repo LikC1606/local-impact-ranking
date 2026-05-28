@@ -97,6 +97,7 @@ from local_impact_ranking.scoring import (
 )
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
 from local_impact_ranking.sciimpact_adapter import convert_sciimpact_jsonl
+from local_impact_ranking.sciimpact_baseline import write_sciimpact_text_baseline_rankings
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
     score_cards_from_evidence_report,
@@ -1040,6 +1041,18 @@ def score(
         json_mode=False,
         judge_audit=judge_audit,
         strict_validation=strict_validation,
+    )
+
+
+@app.command("sciimpact-text-baseline")
+def sciimpact_text_baseline(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    manifest = write_sciimpact_text_baseline_rankings(input, output)
+    typer.echo(
+        "Wrote SciImpact text baseline rankings for "
+        f"{manifest['paper_count']} papers to {output}"
     )
 
 

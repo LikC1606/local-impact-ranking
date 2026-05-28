@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -159,10 +160,10 @@ def _parse_sharegpt_pair(record: dict[str, Any], line_number: int) -> dict[str, 
     winner_key = _parse_sft_winner(answer, line_number)
     impact_dimension = _infer_sft_impact_dimension(system or human)
 
-    paper_a["paper_id"] = _sft_paper_id(line_number, "a")
-    paper_b["paper_id"] = _sft_paper_id(line_number, "b")
-    paper_a.setdefault("metadata", {})["sciimpact_item_type"] = item_type
-    paper_b.setdefault("metadata", {})["sciimpact_item_type"] = item_type
+    paper_a["paper_id"] = _sft_paper_id(paper_a, item_type)
+    paper_b["paper_id"] = _sft_paper_id(paper_b, item_type)
+    _sft_metadata(paper_a, item_type, line_number, "a")
+    _sft_metadata(paper_b, item_type, line_number, "b")
 
     if winner_key == "a":
         winner, loser = paper_a, paper_b
@@ -291,8 +292,34 @@ def _first_nonempty_line(text: str) -> str | None:
     return _optional_string(text)
 
 
-def _sft_paper_id(line_number: int, side: str) -> str:
-    return f"sciimpact:sft:{line_number}:{side}"
+def _sft_metadata(
+    item: dict[str, Any],
+    item_type: str,
+    line_number: int,
+    side: str,
+) -> None:
+    metadata = item.setdefault("metadata", {})
+    metadata["sciimpact_item_type"] = item_type
+    metadata["sciimpact_source_line"] = line_number
+    metadata["sciimpact_source_side"] = side
+
+
+def _sft_paper_id(item: dict[str, Any], item_type: str) -> str:
+    title = _optional_string(item.get("title")) or ""
+    abstract = _optional_string(item.get("abstract")) or ""
+    year = _optional_int(item.get("year"))
+    key = json.dumps(
+        {
+            "item_type": item_type,
+            "title": title.casefold(),
+            "abstract": abstract.casefold(),
+            "year": year,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return f"sciimpact:{item_type}:{digest}"
 
 
 def _upsert_paper(

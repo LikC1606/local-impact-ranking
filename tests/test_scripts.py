@@ -186,6 +186,20 @@ def test_run_sciimpact_sft_smoke_script_converts_official_sft_sample():
     assert 'test -s "${OUTPUT}/converted/manifest.json"' in script
     assert 'grep -q \'"skipped_pair_count"\' "${OUTPUT}/converted/manifest.json"' in script
     assert 'pair_count="$(wc -l < "${OUTPUT}/converted/pairwise_labels.jsonl" | tr -d \' \')"' in script
+    assert 'paper_count}" -lt 1 || "${paper_count}" -gt $((pair_count * 2))' in script
+
+
+def test_run_sciimpact_sft_baseline_script_converts_scores_and_evaluates():
+    script = Path("scripts/run_sciimpact_sft_baseline.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl}"' in script
+    assert 'LIMIT="${LIMIT:-1000}"' in script
+    assert "benchmarks convert-sciimpact" in script
+    assert "sciimpact-text-baseline" in script
+    assert "evaluate-pairwise-impact" in script
+    assert 'test -s "${OUTPUT}/rankings/sciimpact_text_prior.csv"' in script
+    assert 'test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.json"' in script
+    assert "pairwise_accuracy=" in script
 
 
 def test_download_prescience_sample_script_streams_from_mirror():

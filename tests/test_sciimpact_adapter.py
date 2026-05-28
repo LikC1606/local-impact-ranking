@@ -149,6 +149,53 @@ def test_convert_sciimpact_sharegpt_sft_writes_pairwise_labels(tmp_path):
     assert labels[1]["impact_dimension"] == "citation"
 
 
+def test_convert_sciimpact_sharegpt_uses_content_stable_ids(tmp_path):
+    source = tmp_path / "sciimpact_repeated_sft.jsonl"
+    output = tmp_path / "sciimpact_repeated_sft"
+    repeated = "Title: Shared Paper Abstract: Same text appears in two pairs."
+    rows = [
+        {
+            "conversations": [
+                {"from": "system", "value": "Which paper has more citations?"},
+                {
+                    "from": "human",
+                    "value": (
+                        f"Paper A: {repeated} "
+                        "Paper B: Title: Other One Abstract: Other text. "
+                        "Which paper has more citations?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper A has more citations."},
+            ]
+        },
+        {
+            "conversations": [
+                {"from": "system", "value": "Which paper has more citations?"},
+                {
+                    "from": "human",
+                    "value": (
+                        "Paper A: Title: Other Two Abstract: Other text. "
+                        f"Paper B: {repeated} "
+                        "Which paper has more citations?"
+                    ),
+                },
+                {"from": "gpt", "value": "Paper B has more citations."},
+            ]
+        },
+    ]
+    source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    manifest = convert_sciimpact_jsonl(source, output)
+
+    assert manifest["pair_count"] == 2
+    assert manifest["paper_count"] == 3
+    papers = load_papers_jsonl(output / "papers.jsonl")
+    shared = [paper for paper in papers if paper.title == "Shared Paper"]
+    assert len(shared) == 1
+    assert shared[0].paper_id.startswith("sciimpact:paper:")
+    assert shared[0].metadata["sciimpact_pair_ids"] == ["sciimpact-1", "sciimpact-2"]
+
+
 def test_convert_sciimpact_can_skip_invalid_sft_rows_with_manifest_report(tmp_path):
     source = tmp_path / "sciimpact_sft_invalid.jsonl"
     output = tmp_path / "sciimpact_sft_invalid"
@@ -201,7 +248,8 @@ def test_convert_sciimpact_can_skip_invalid_sft_rows_with_manifest_report(tmp_pa
         json.loads(line)
         for line in (output / "pairwise_labels.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert labels[0]["winner_id"].endswith(":b")
+    papers = {paper.paper_id: paper for paper in load_papers_jsonl(output / "papers.jsonl")}
+    assert papers[labels[0]["winner_id"]].title == "Higher Impact"
 
 
 def test_convert_sciimpact_is_strict_by_default_for_invalid_rows(tmp_path):

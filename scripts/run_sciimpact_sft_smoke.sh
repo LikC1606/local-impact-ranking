@@ -35,8 +35,8 @@ if [[ "${pair_count}" -ne "${LIMIT}" ]]; then
   exit 1
 fi
 
-if [[ "${paper_count}" -lt "${LIMIT}" ]]; then
-  echo "Expected at least ${LIMIT} converted items, got ${paper_count}" >&2
+if [[ "${paper_count}" -lt 1 || "${paper_count}" -gt $((pair_count * 2)) ]]; then
+  echo "Expected converted items between 1 and $((pair_count * 2)), got ${paper_count}" >&2
   exit 1
 fi
 

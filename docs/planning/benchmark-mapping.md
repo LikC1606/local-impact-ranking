@@ -114,6 +114,7 @@ Why fourth:
 - Metrics: `pairwise_accuracy`, `non_tie_pairwise_accuracy`, `coverage_rate`, `tie_rate`, `field_macro_accuracy`.
 - Local smoke: `scripts/run_sciimpact_smoke.sh runs/sciimpact-smoke`.
 - Official SFT smoke: `scripts/run_sciimpact_sft_smoke.sh runs/sciimpact-sft-smoke`.
+- No-GPU baseline: `LIMIT=63207 scripts/run_sciimpact_sft_baseline.sh runs/sciimpact-sft-baseline`; current full downloaded test result is `pairwise_accuracy=0.494`, `non_tie_pairwise_accuracy=0.507`, `coverage_rate=1.000` after skipping 396 malformed rows.
 - Full-data workflow: convert the downloaded pairwise JSONL or official ShareGPT/SFT file with `benchmarks convert-sciimpact`, run the normal ranking pipeline over the converted `papers.jsonl` or an ID-aligned private ranking, then run `evaluate-pairwise-impact` with `pairwise_labels.jsonl`.
 - Data-quality note: the official SFT files contain a small number of malformed A/B prompts; the CLI skips them by default and reports the count in `manifest.json`.
 
