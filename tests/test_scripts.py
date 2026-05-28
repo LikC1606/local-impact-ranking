@@ -228,7 +228,10 @@ def test_download_scicite_script_downloads_extracts_and_converts_splits():
 def test_check_publish_ready_script_blocks_local_outputs_and_runs_tests():
     script = Path("scripts/check_publish_ready.sh").read_text(encoding="utf-8")
 
-    assert "git check-ignore data models runs" in script
+    assert "data/.publish-check" in script
+    assert "models/.publish-check" in script
+    assert "runs/.publish-check" in script
+    assert "git check-ignore" in script
     assert "scripts/run_quickstart.sh" in script
     assert "git ls-files data models runs" in script
     assert "pytest -q" in script

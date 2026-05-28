@@ -13,7 +13,11 @@ test -f docs/evaluation-method.md
 test -f docs/publish-checklist.md
 test -f scripts/run_quickstart.sh
 
-git check-ignore data models runs >/dev/null
+git check-ignore \
+  data/.publish-check \
+  models/.publish-check \
+  runs/.publish-check \
+  >/dev/null
 
 if git ls-files data models runs | grep -q .; then
   echo "Refusing to publish: data/, models/, or runs/ are tracked by git." >&2
