@@ -223,6 +223,31 @@ scripts/run_benchmark_smoke.sh runs/benchmark-smoke
 
 By default this uses `data/scicite/dev.papers.jsonl`, `LIMIT=5`, the heuristic judge, and `context_weighted` scoring.
 
+Convert SciImpact-style pairwise impact JSONL into local benchmark files:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli benchmarks convert-sciimpact \
+  --input data/sciimpact/train.jsonl \
+  --output data/sciimpact/train
+```
+
+The adapter writes `papers.jsonl`, `pairwise_labels.jsonl`, and `manifest.json`. It accepts common pair formats such as `chosen/rejected`, `positive/negative`, and `paper_a/paper_b + winner`.
+
+Evaluate an existing paper ranking against pairwise impact labels:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-pairwise-impact \
+  --rankings runs/my-run/rankings/papers.csv \
+  --labels data/sciimpact/train/pairwise_labels.jsonl \
+  --output runs/my-run/sciimpact_eval
+```
+
+This reports pairwise accuracy, non-tie accuracy, coverage rate, tie rate, and per-dimension/per-field metrics. Run the fixture smoke without downloading the full benchmark:
+
+```bash
+scripts/run_sciimpact_smoke.sh runs/sciimpact-smoke
+```
+
 ## Run With The Heuristic Smoke Judge
 
 The MVP uses a deterministic heuristic judge for smoke tests:

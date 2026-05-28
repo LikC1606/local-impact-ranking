@@ -98,14 +98,23 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         notes="Broader than citation-only influence; use as a later-stage benchmark.",
         source_url="https://flypig23.github.io/sciimpact-homepage/",
         paper_url="https://arxiv.org/abs/2604.17141",
-        implementation_status="planned",
+        implementation_status="adapter_ready",
         recommended_order=4,
-        evaluation_metrics=("pairwise_accuracy", "win_rate", "field_macro_accuracy"),
+        evaluation_metrics=(
+            "pairwise_accuracy",
+            "non_tie_pairwise_accuracy",
+            "coverage_rate",
+            "tie_rate",
+            "field_accuracy",
+        ),
         evaluation_role=(
             "Direct pairwise scientific-impact benchmark for checking whether "
             "the scoring model orders higher-impact papers above lower-impact papers."
         ),
-        local_command="planned: add SciImpact pairwise adapter when public files are stable",
+        local_command=(
+            "scripts/run_sciimpact_smoke.sh runs/sciimpact-smoke; "
+            "for full data, run benchmarks convert-sciimpact then evaluate-pairwise-impact"
+        ),
         transfer_risk=(
             "Pairwise labels transfer well to ranking, but their impact dimensions "
             "must be reported separately from dataset-local score magnitude."
@@ -164,7 +173,9 @@ def benchmark_plan() -> dict[str, Any]:
     return {
         "recommended_order": [spec.key for spec in specs],
         "ready_now": [
-            spec.key for spec in specs if spec.implementation_status == "ready"
+            spec.key
+            for spec in specs
+            if spec.implementation_status in {"ready", "adapter_ready"}
         ],
         "primary_benchmark": "prescience",
         "direct_impact_benchmark": "sciimpact",

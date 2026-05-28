@@ -58,7 +58,9 @@
 
 - PreScience adapter 已实现，可用于 key-reference selection gold evaluation。
 - SciCite train/dev/test 已转换成本地 schema。
+- SciImpact pairwise adapter 已实现，可把成对影响力标签转换为 `papers.jsonl` 和 `pairwise_labels.jsonl`，并用 `evaluate-pairwise-impact` 评估现有排名的 pairwise accuracy、coverage、tie rate 和分领域/维度表现。
 - `scripts/run_benchmark_smoke.sh` 可在没有私有数据时跑一个无 GPU benchmark smoke。
+- `scripts/run_sciimpact_smoke.sh` 可在没有下载完整 SciImpact 时验证成对影响力评估链路。
 
 ## 4. 当前验证
 

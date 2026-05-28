@@ -81,6 +81,7 @@ from local_impact_ranking.judge import (
 from local_impact_ranking.llamafactory_export import export_llamafactory_configs
 from local_impact_ranking.manifest import build_run_manifest, sha256_file
 from local_impact_ranking.normalize import normalize_paper
+from local_impact_ranking.pairwise_evaluation import write_pairwise_evaluation
 from local_impact_ranking.proxy_evaluation import evaluate_proxy_quality
 from local_impact_ranking.project_readiness import (
     render_project_readiness_markdown,
@@ -95,6 +96,7 @@ from local_impact_ranking.scoring import (
     scoring_config,
 )
 from local_impact_ranking.scicite_adapter import convert_scicite_jsonl
+from local_impact_ranking.sciimpact_adapter import convert_sciimpact_jsonl
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
     score_cards_from_evidence_report,
@@ -376,6 +378,27 @@ def score_card(
     typer.echo(f"Wrote score cards to {output} (cards={report['card_count']})")
 
 
+@app.command("evaluate-pairwise-impact")
+def evaluate_pairwise_impact(
+    rankings: Path = typer.Option(..., "--rankings", exists=True, readable=True),
+    labels: Path = typer.Option(..., "--labels", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    score_column: str | None = typer.Option(None, "--score-column"),
+) -> None:
+    report = write_pairwise_evaluation(
+        rankings,
+        labels,
+        output,
+        score_column=score_column,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote pairwise impact evaluation to "
+        f"{output} (pairwise_accuracy={summary['pairwise_accuracy']:.3f}, "
+        f"coverage_rate={summary['coverage_rate']:.3f})"
+    )
+
+
 @app.command("entity-resolution-report")
 def entity_resolution_report_command(
     input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
@@ -515,6 +538,19 @@ def benchmarks_convert_scicite(
 ) -> None:
     count = convert_scicite_jsonl(input, output)
     typer.echo(f"Wrote {count} converted papers to {output}")
+
+
+@benchmarks_app.command("convert-sciimpact")
+def benchmarks_convert_sciimpact(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    manifest = convert_sciimpact_jsonl(input, output)
+    typer.echo(
+        "Wrote "
+        f"{manifest['pair_count']} SciImpact pairs and "
+        f"{manifest['paper_count']} papers to {output}"
+    )
 
 
 @benchmarks_app.command("convert-prescience")

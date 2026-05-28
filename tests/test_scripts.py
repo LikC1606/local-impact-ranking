@@ -161,6 +161,19 @@ def test_run_benchmark_smoke_script_runs_limited_scicite_pipeline():
     assert 'test -s "${OUTPUT}/rankings/papers.csv"' in script
 
 
+def test_run_sciimpact_smoke_script_converts_and_evaluates_pairwise_fixture():
+    script = Path("scripts/run_sciimpact_smoke.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${INPUT:-examples/sciimpact_pairs.jsonl}"' in script
+    assert "benchmarks convert-sciimpact" in script
+    assert "evaluate-pairwise-impact" in script
+    assert 'test -s "${OUTPUT}/converted/papers.jsonl"' in script
+    assert 'test -s "${OUTPUT}/converted/pairwise_labels.jsonl"' in script
+    assert 'test -s "${OUTPUT}/rankings/papers.csv"' in script
+    assert 'test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.json"' in script
+    assert 'test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.md"' in script
+
+
 def test_download_prescience_sample_script_streams_from_mirror():
     script = Path("scripts/download_prescience_sample.sh").read_text(encoding="utf-8")
 

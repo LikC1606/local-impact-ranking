@@ -104,14 +104,16 @@ Use for:
 Map to pipeline:
 
 - `finetuning` for pairwise preference or ranking data.
-- `reports` for broader impact comparison later.
+- `reports` for pairwise impact evaluation by dimension and field.
 
 Why fourth:
 
 - Useful, but broader than citation-only influence.
 - Public source: https://flypig23.github.io/sciimpact-homepage/
-- Current project status: planned.
-- Metrics: `pairwise_accuracy`, `win_rate`, `field_macro_accuracy`.
+- Current project status: adapter_ready.
+- Metrics: `pairwise_accuracy`, `non_tie_pairwise_accuracy`, `coverage_rate`, `tie_rate`, `field_macro_accuracy`.
+- Local smoke: `scripts/run_sciimpact_smoke.sh runs/sciimpact-smoke`.
+- Full-data workflow: convert the downloaded pairwise JSONL with `benchmarks convert-sciimpact`, run the normal ranking pipeline over the converted `papers.jsonl` or an ID-aligned private ranking, then run `evaluate-pairwise-impact` with `pairwise_labels.jsonl`.
 
 ### 5. BIP! DB / OpenCitations
 
