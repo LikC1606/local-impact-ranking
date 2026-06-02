@@ -45,6 +45,58 @@ scripts/run_quickstart.sh runs/quickstart
 
 It runs `doctor`, the context-weighted heuristic example, score cards, entity-resolution diagnostics, a report bundle, and a runs index.
 
+Run the no-GPU impact demo to see the project goal end to end:
+
+```bash
+scripts/run_impact_demo.sh runs/impact-demo
+```
+
+This uses `examples/impact_demo_papers.jsonl` plus offline replayed pairwise judgments, so it does not call a model server or use GPU. It writes `impact_scores.csv`, `model_impact_report.md`, `impact_score_cards.md`, `impact_claim_certificate.md`, `impact_validity/impact_credibility_scorecard.json`, `report_bundle/`, and `demo_status.json`. Treat it as the canonical local demo for "given a paper dataset, produce dataset-local impact scores with evidence and claim boundaries."
+
+For a full handoff check, run the deliverable script:
+
+```bash
+scripts/run_deliverable_check.sh runs/deliverable-check
+```
+
+It runs the no-GPU quickstart, the SciImpact pairwise fixture, validates report bundles, and writes `deliverable_status.json`. If a local OpenAI-compatible model server is already running, include the optional model-score smoke:
+
+```bash
+CHECK_MODEL=1 \
+BASE_URL=http://localhost:8000/v1 \
+MODEL=local-impact-judge-source-task-dpo \
+  scripts/run_deliverable_check.sh runs/deliverable-check-model
+```
+
+The optional model smoke runs `model-score-dataset` on the built-in context fixture with coverage sampling, bidirectional pairwise judging, calibrated confidence, and a report bundle.
+
+Run your own paper dataset through the recommended local model path:
+
+```bash
+BASE_URL=http://localhost:8000/v1 \
+MODEL=local-impact-judge-source-task-dpo \
+  scripts/run_user_impact.sh papers.external.jsonl runs/my-impact
+```
+
+This validates the input, writes a model-score preflight estimate, checks the OpenAI-compatible local model server, runs `model-score-dataset` with coverage sampling, bidirectional pairwise judging, calibrated confidence, a pairwise checkpoint journal, and a report bundle, then writes `user_impact_status.json` and `user_impact_summary.md`. The summary includes claim boundaries, validation issue counts and examples, model benchmark credibility (`model_credibility_status` from `configs/model_credibility/local-impact-judge-source-task-dpo.json`), calibration credibility (`calibration_status` from `configs/calibration/sciimpact-qwen32b-heldout-p50.json`), `model_credibility_card.md`, `calibration_profile_card.md`, `model_identity_match`, `calibration_model_identity_match`, `report_decision`, top scores, evidence gaps, recommended next actions, and artifact paths. If the supplied model profile is missing, below reportable credibility, or does not match the served `MODEL`, `report_decision` is downgraded to `exploratory_only`; the same downgrade applies when the calibration profile is missing, too weak, or incompatible with the served model. The current recommended model profile is only moderate credibility, so it can be used with disclosure but not as a high-credibility standalone impact oracle. Defaults are conservative: `PAIR_BUDGET=auto`, `TARGET_PAPER_COVERAGE=0.25`, `BIDIRECTIONAL_PAIRWISE=1`, and `CALIBRATION_REPORT=configs/calibration/sciimpact-qwen32b-heldout-p50.json`.
+
+Useful overrides:
+
+```bash
+RUN_PRESET=balanced \
+MAX_PAIRS=200 \
+TARGET_PAPER_COVERAGE=1.0 \
+CONCURRENCY=4 \
+VALIDITY_LABELS=runs/my-impact/future-labels/future_impact_labels.jsonl \
+RESUME_PAIRWISE_JUDGMENTS=runs/my-impact/model-impact/pairwise_judgments.jsonl \
+PAIRWISE_JOURNAL=runs/my-impact/model-impact/pairwise_judgments.jsonl \
+  scripts/run_user_impact.sh papers.external.jsonl runs/my-impact-resumed
+```
+
+Use `PAIRWISE_JUDGMENTS=...` to replay saved model judgments without calling the pairwise model again. The claim boundary remains dataset-local paper influence unless external calibrated evidence and validity labels support stronger claims.
+
+`RUN_PRESET=quick|balanced|full|custom` provides convenience defaults for model-scoring scale. `custom` preserves explicit environment variables and is the default; `quick` is for cheap preflight/smoke runs, `balanced` is for ordinary pilot runs, and `full` targets full paper coverage unless `MAX_PAIRS` or `TARGET_PAPER_COVERAGE` are set manually.
+
 ## Input
 
 Use JSONL with one paper per line:
@@ -56,6 +108,51 @@ Use JSONL with one paper per line:
 References should include stable `reference_id` values when available. Missing reference IDs are filled during normalization.
 
 For the full schema, citation-context format, and benchmark gold-label conventions, see [docs/input-schema.md](docs/input-schema.md).
+
+To add external citation evidence from OpenAlex before scoring:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-openalex \
+  --input papers.jsonl \
+  --output papers.openalex.jsonl \
+  --email you@example.com
+```
+
+Use `papers.openalex.jsonl` as the input to `model-score-dataset`. The enrichment command uses DOI or OpenAlex IDs and writes `citation_count`, yearly citation counts, OpenAlex IDs, and `metadata.external_impact.field_year_percentile` when a work is matched.
+
+To add DOI-level citation counts and recover dataset-internal citation graph edges from OpenCitations:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-opencitations \
+  --input papers.openalex.jsonl \
+  --output papers.opencitations.jsonl \
+  --materialize-internal-edges
+```
+
+Use `papers.opencitations.jsonl` as the scoring input when DOI coverage is good. The command writes `metadata.external_impact.opencitations_cited_by_count`, `metadata.external_impact.opencitations_reference_count`, `metadata.opencitations_incoming_edges`, and, with `--materialize-internal-edges`, adds DOI-matched internal references so `citation_graph_score` and PageRank can use OpenCitations evidence.
+
+To merge external evidence you already exported from OpenAlex, BIP!, Semantic Scholar, patent, policy, media, award, or artifact-adoption sources:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli import-external-evidence \
+  --input papers.opencitations.jsonl \
+  --evidence external_evidence.csv \
+  --output papers.external.jsonl \
+  --summary-output runs/external-import-summary.json
+```
+
+The importer matches by `paper_id`, DOI, OpenAlex ID, or Semantic Scholar/S2 ID and writes compatible fields under `metadata.external_impact`. Supported high-value fields include OpenAlex field/year percentile, BIP impact evidence, Semantic Scholar influential citation counts, patent and policy citations, media and award counts, GitHub/software adoption, dataset reuse, and model/download evidence.
+
+Before claiming high-credibility impact scores, check external evidence coverage:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli external-evidence-readiness \
+  --input papers.external.jsonl \
+  --output runs/external-readiness \
+  --markdown
+```
+
+This writes `external_evidence_readiness.json`, `external_evidence_readiness.md`, and `external_evidence_paper_coverage.csv` with DOI/OpenAlex ID coverage, OpenAlex/OpenCitations/BIP/Semantic Scholar enrichment coverage, citation and field/year percentile coverage, influential-citation coverage, patent/policy/artifact/media/award evidence coverage, materialized graph-edge counts, per-paper missing evidence labels, a missing-evidence count summary, and a decision of `ready_for_high_credibility_scoring`, `usable_with_disclosure`, or `insufficient_external_evidence`. The same readiness artifacts are also generated automatically by `run` under `reports/` and by `model-score-dataset` in its output directory.
 
 If your data starts as CSV, convert it to the canonical JSONL format first:
 
@@ -105,6 +202,12 @@ PYTHONPATH=src python -m local_impact_ranking.cli validate-dpo-data \
   --train-file runs/my-dataset-train/finetuning/merged_dpo_preferences.jsonl \
   --output runs/my-dataset-train/finetuning
 
+PYTHONPATH=src python -m local_impact_ranking.cli inspect-sft-tokenization \
+  --model models/deepseek-r1-distill-qwen-32b \
+  --train-file runs/my-dataset-train/finetuning/format_sft.jsonl \
+  --output runs/my-dataset-train/finetuning/tokenization-16384 \
+  --max-length 16384
+
 PYTHONPATH=src python -m local_impact_ranking.cli finetuning-preflight \
   runs/my-dataset-train
 
@@ -113,6 +216,8 @@ PYTHONPATH=src python -m local_impact_ranking.cli train-dpo \
   --train-file runs/my-dataset-train/finetuning/merged_dpo_preferences.jsonl \
   --output runs/my-dataset-train/checkpoints/dpo
 ```
+
+`inspect-sft-tokenization` is a no-GPU training-readiness check. It reports whether long SFT prompts preserve the task prefix, the prompt suffix, and the full answer tokens at the selected `--max-length`. On 8x H100, prefer checking `8192` and `16384` before training; earlier 1024-token LoRA experiments are context-limited diagnostics. A later clean 16k-token SFT/DPO run removed truncation but did not beat the current recommended adapter, so context length alone is not treated as the active quality bottleneck.
 
 After training, serve the adapter or merged model separately and compare it against the base judge on `dev.papers.jsonl`. Only use `test.papers.jsonl` for the final reported comparison.
 
@@ -145,6 +250,190 @@ PYTHONPATH=src python -m local_impact_ranking.cli runs-index \
   runs \
   --output runs/index
 ```
+
+## Local Model Impact Index
+
+For a local Qwen-compatible OpenAI API server, score a paper dataset directly with pairwise model judgments:
+
+Recommended local judge for the current project state:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PORT=8000 \
+  scripts/serve_recommended_impact_judge.sh
+```
+
+This serves `local-impact-judge-source-task-dpo`, the current recommended LoRA adapter. It is trained from the SciImpact source-task prompts instead of rewriting all examples into a generic "higher scholarly impact" prompt. That keeps the benchmark task semantics visible during training: award, citation, downloads, media, patent, and stars questions are learned as distinct impact dimensions while the output is normalized to `Answer: A/B`.
+
+Three held-out SciImpact p50 seeds show a stronger and more stable judge than the previous recommended SFT16k512+DPO16k256 adapter: mean direct accuracy `0.634 -> 0.659`, mean bidirectional selected accuracy `0.662 -> 0.669`, and mean A/B consistency `0.631 -> 0.789`. The improvement is still modest on selected accuracy, and the report discloses small `dataset` and `patent` slice regressions. Treat the adapter as the default for bidirectional scoring with uncertainty/reportability fields visible, not as a claim of global scientific impact.
+
+The evidence bundle is written by:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli credibility-report \
+  --baseline-run runs/sciimpact-qwen32b-sft16k-dpo16k-flip-consistency-stratified-p50-c4/model_eval \
+  --baseline-run runs/sciimpact-qwen32b-sft16k-dpo16k-flip-consistency-stratified-p50-seed47-c4/model_eval \
+  --baseline-run runs/sciimpact-qwen32b-thirdseed-p50-seed71/sft16k_dpo16k \
+  --candidate-run runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-seed23-p50 \
+  --candidate-run runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-seed47-p50 \
+  --candidate-run runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-seed71-p50 \
+  --seed-label seed23 --seed-label seed47 --seed-label seed71 \
+  --baseline-model recommended-sft16k512-dpo-random16k256 \
+  --candidate-model source-task-sft16k4096-dpo16k1024-128 \
+  --min-seed-count 3 \
+  --allowed-seed-selected-regression 0.01 \
+  --allowed-slice-regression 0.06 \
+  --output runs/impact-system-credibility-source-task-dpo-slice-tolerance006
+```
+
+Stricter `0.05` slice-regression gating keeps the previous adapter because seed71 `patent` regresses by `0.06`. The published default uses the source-task adapter with that explicit caveat because it improves every seed, improves mean direct accuracy more substantially, and greatly reduces A/B position sensitivity. New candidate adapters should still be judged with at least three held-out seeds, positive mean selected-accuracy delta, no direct-accuracy drop on average, no seed selected-accuracy regression worse than `0.01`, and a disclosed dimension/item-type slice-regression threshold.
+
+Before a large model-scoring run, estimate the work without calling the model:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli model-score-preflight \
+  --input papers.external.jsonl \
+  --output runs/my-impact-preflight \
+  --pair-sampling coverage \
+  --pair-budget auto \
+  --target-paper-coverage 0.25 \
+  --bidirectional-pairwise \
+  --direct-score
+```
+
+This writes `model_score_preflight.json/md` with `planned_pair_count`, resume coverage when `--resume-pairwise-judgments` is supplied, `missing_pair_count`, `pairwise_model_request_count`, `direct_model_request_count`, `total_model_request_count`, and a compact external-evidence readiness summary. Use it to size runtime and decide whether to reduce pair budget before starting GPU inference.
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
+  --input papers.external.jsonl \
+  --output runs/my-impact \
+  --base-url http://localhost:8000/v1 \
+  --model local-impact-judge-source-task-dpo \
+  --direct-score \
+  --pair-sampling coverage \
+  --pair-budget auto \
+  --target-paper-coverage 0.25 \
+  --bidirectional-pairwise \
+  --bidirectional-confidence-margin 0.05 \
+  --calibration-report configs/calibration/sciimpact-qwen32b-heldout-p50.json \
+  --fusion-weights runs/my-calibration/fusion_calibration.json \
+  --validity-labels runs/my-impact/future-labels/future_impact_labels.jsonl \
+  --validity-label-column future_impact \
+  --report-bundle
+```
+
+This writes `pairwise_judgments.jsonl`, `impact_scores.csv`, `impact_scores.jsonl`, `impact_score_cards.json/md`, `external_evidence_readiness.json/md`, `external_evidence_paper_coverage.csv`, `impact_claim_certificate.json/md`, `impact_validity/impact_validity_evaluation.json/md` when `--validity-labels` is supplied, `direct_scores.csv/jsonl` when direct scoring is enabled, and `model_impact_report.json/md`.
+With `--report-bundle`, it also writes a shareable bundle at `runs/my-impact/report_bundle` by default; use `--report-bundle-output PATH` to choose another location.
+
+To reproduce or resume a long model-scoring run without calling the model again, replay the saved pairwise judgments:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
+  --input papers.external.jsonl \
+  --output runs/my-impact-replayed \
+  --base-url http://localhost:8000/v1 \
+  --model local-impact-judge-source-task-dpo \
+  --pairwise-judgments runs/my-impact/pairwise_judgments.jsonl \
+  --report-bundle
+```
+
+Replay mode still recomputes `impact_scores.csv`, score cards, external-evidence readiness, the impact claim certificate, and the optional report bundle. The model report records `pairwise_judgment_source.type=file` and the judgment file path for audit.
+
+For interrupted long runs, use resume mode instead of replay mode:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
+  --input papers.external.jsonl \
+  --output runs/my-impact-resumed \
+  --base-url http://localhost:8000/v1 \
+  --model local-impact-judge-source-task-dpo \
+  --resume-pairwise-judgments runs/my-impact/pairwise_judgments.jsonl \
+  --pairwise-journal runs/my-impact/pairwise_judgments.jsonl \
+  --pair-sampling coverage \
+  --pair-budget auto \
+  --report-bundle
+```
+
+Resume mode loads the existing judgments, skips already completed planned pairs, calls the model only for missing pairs, and writes a merged `pairwise_judgments.jsonl`. `--pairwise-journal` writes each newly generated judgment to a JSONL checkpoint immediately after completion; when the journal path is the same as the resume file, missing judgments are appended instead of truncating the file. The model report records `pairwise_judgment_source.type=resume`, `existing_count`, `generated_count`, and `pairwise_journal`.
+
+The raw evidence-first score is `impact_index_v3`, a dataset-local 0-100 score. It combines field/year-normalized citations, an RCR-like `relative_citation_ratio_score`, local citation-graph PageRank, citation-context quality, Semantic Scholar-compatible `influential_citation_score`, citation momentum, and optional external adoption signals such as external percentile, `bip_impact_score`, patent citations, policy citations, media mentions, award counts, GitHub/software adoption, dataset reuse, and model/download evidence. The final report score is `final_impact_score`, which applies a credibility adjustment to discount model-only or weak-evidence rows. The local Qwen pairwise score is aggregated with order-independent Rank Centrality by default and remains in `model_supported_score` / `impact_index` as a model-assisted signal, not the sole authority; `elo_rating` is retained for audit.
+
+`impact_index_v2` is still written as a compatibility score using `0.30 model_pairwise + 0.25 field_year_normalized_citation + 0.20 citation_graph + 0.15 citation_context_quality + 0.10 temporal_momentum`. `impact_index_v3` uses an evidence-first layer: `0.80 evidence_supported_score + 0.20 model_supported_score`. The evidence score uses `0.18 field_year_normalized_citation + 0.14 relative_citation_ratio + 0.14 citation_graph + 0.14 citation_context_quality + 0.10 influential_citation + 0.10 temporal_momentum + 0.20 external_adoption` when those signals exist. `relative_citation_ratio_score` is RCR-like, not NIH RCR: it divides article annual citation rate by a supplied expected citation rate, or by a local field/year expected rate only when that bucket has enough papers. `final_impact_score` then applies a credibility adjustment to discount model-only or weak-evidence rows. Missing signal weights are redistributed per paper, and each row includes `credible_evidence_tier`, `missing_high_value_evidence`, `evidence_quality_flag`, `uncertainty_band`, and `reportability_status` so sparse or unstable scores are visible instead of silently overclaimed.
+
+`model_impact_report.md` includes **Impact Dimension Coverage**, mapping SciImpact-style dimensions to supported evidence: citation, patent, policy, media, award, downloads, and stars/artifact adoption. `impact_score_cards.md` gives per-paper score cards with component scores, raw evidence, citation outlier diagnostics, missing high-value evidence, confidence, and reportability.
+
+`impact_claim_certificate.md` is the report-facing claim gate. It summarizes whether the run is `validated`, `evidence_supported`, `exploratory`, or `blocked`; whether validated impact accuracy can be claimed; whether high-credibility external evidence is present; the score table coverage; and the next actions needed to strengthen the claim. Use it as the first page of a results handoff before showing detailed score cards.
+
+To fit those fusion weights against a labeled benchmark or held-out development split, run:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli calibrate-fusion-weights \
+  --rankings runs/my-impact/impact_scores.csv \
+  --labels data/pairwise_labels.jsonl \
+  --output runs/my-calibration \
+  --grid-step 0.1
+```
+
+Then pass `runs/my-calibration/fusion_calibration.json` back to `model-score-dataset` with `--fusion-weights`. The run report records `fusion.weight_source`, so calibrated and default scoring runs remain auditable.
+
+`calibrate-fusion-weights` now fits `impact_index_v3_final_components`: model pairwise, field/year citation, RCR-like citation ratio, graph, citation context, influential citation, temporal momentum, and external adoption components are all eligible for calibration. It expects a `model-score-dataset` `impact_scores.csv` with v3 component score columns such as `model_pairwise_score`, `relative_citation_ratio_score`, `influential_citation_score`, and `external_adoption_score`. Legacy SciImpact index-eval CSV files with only `impact_index` are intentionally rejected because they cannot calibrate fusion weights.
+
+The quality layer uses log-scaled citation normalization plus rank-percentile component scaling, leave-one-signal-out score intervals (`score_ci_low`, `score_ci_high`, `score_ci_width`), dominant-signal contribution share, and a per-paper `reportability_status` of `reportable`, `exploratory`, or `low_confidence`. Rank-percentile scaling keeps extreme maxima from compressing the rest of a component while preserving tied top evidence at 100. Final reportability uses `reportability_basis=impact_index_v3_evidence_first`; `legacy_reportability_status` keeps the earlier v2 signal-count decision for audit. `validity_confidence` is reported separately from `final_impact_score`: without future-window or external labels, the run-level `validated_impact_claim` remains `unvalidated`, so scores can be described only as evidence-supported estimates, not validated impact accuracy.
+
+`confidence` combines comparison coverage with pairwise model confidence. When the built-in SciImpact-derived calibration profile is supplied, `confidence` uses empirical calibrated confidence, while `mean_pairwise_confidence` remains the raw logprob diagnostic. The bundled profile is an approximate trust prior from SciImpact held-out validation, not domain-specific ground truth for every dataset. Its profile lists `compatible_models`, and user runs generate `calibration_profile_card.md` with `calibration_model_identity_match`; an incompatible calibration profile downgrades `report_decision` to `exploratory_only`. On a held-out source-task DPO validation split, the same profile improved ECE from `0.045` to `0.029` with nearly unchanged Brier score (`0.218` to `0.219`), so it is useful as a conservative reporting prior but still not a substitute for validating your own corpus.
+
+For budget-limited runs, prefer `--pair-sampling coverage`; it spreads early pairwise comparisons across papers instead of spending the first comparisons only on the first few records. `--bidirectional-pairwise` asks each pair in both A/B and B/A order, records position consistency, and treats low-confidence conflicts as non-decisive so they do not distort the pairwise score. The default `--pairwise-aggregation rank_centrality` is order-independent; `--pairwise-aggregation elo` is still available for legacy comparisons.
+
+Use `--pair-budget auto --target-paper-coverage <0-1>` when you want the command to choose a pair budget from the dataset size. For example, `--target-paper-coverage 0.25` on 1000 papers selects about 125 pairwise comparisons and covers about 250 papers under coverage sampling.
+
+`model_impact_report.json/md` and `impact_scores.csv` include `ranking_quality`. Sparse runs are marked `exploratory` with paper-coverage counts, so a small smoke run is not mistaken for a complete impact ranking.
+
+When you have future-window labels or an external continuous impact target, validate that the score is actually aligned with that target:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli apply-citation-cutoff \
+  --input papers.openalex.jsonl \
+  --output papers.cutoff-2022.jsonl \
+  --cutoff-year 2022
+
+PYTHONPATH=src python -m local_impact_ranking.cli audit-citation-cutoff \
+  --input papers.cutoff-2022.jsonl \
+  --output runs/my-impact/reports \
+  --cutoff-year 2022
+
+PYTHONPATH=src python -m local_impact_ranking.cli derive-future-impact-labels \
+  --input papers.openalex.jsonl \
+  --output runs/my-impact/future-labels \
+  --start-year 2023 \
+  --end-year 2025 \
+  --normalization field-year-percentile
+
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-impact-validity \
+  --rankings runs/my-impact/impact_scores.csv \
+  --labels runs/my-impact/future-labels/future_impact_labels.jsonl \
+  --label-column future_impact \
+  --top-fraction 0.1 \
+  --bootstrap-samples 1000 \
+  --permutation-samples 1000 \
+  --output runs/my-impact/impact_validity
+```
+
+Or run the evidence-building steps together after scoring the cutoff dataset:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli backtest-impact-validity \
+  --enriched-input papers.openalex.jsonl \
+  --cutoff-input papers.cutoff-2022.jsonl \
+  --rankings runs/my-impact/impact_scores.csv \
+  --output runs/my-impact \
+  --cutoff-year 2022 \
+  --future-start-year 2023 \
+  --future-end-year 2025 \
+  --label-normalization field-year-percentile \
+  --bootstrap-samples 1000 \
+  --permutation-samples 1000
+```
+
+`apply-citation-cutoff` removes citation-history years after the cutoff and rewrites citation totals so the scoring input cannot leak future citation evidence. `audit-citation-cutoff` checks that the scoring input contains no post-cutoff citation years before you run the model. Writing it to `runs/my-impact/reports` makes `citation_cutoff_audit.json/md` part of `project-readiness` and `report-bundle`: if future-window validity exists but the audit is missing, readiness warns; if the audit fails, readiness blocks future-window validity claims. Score `papers.cutoff-2022.jsonl`, then validate its `impact_scores.csv` against labels from 2023-2025. `derive-future-impact-labels` reads `metadata.citation_counts_by_year` or compatible yearly citation-history fields and writes a future-window citation label. Prefer `--normalization field-year-percentile` or `--label-normalization field-year-percentile` for cross-field datasets; this keeps `future_impact_raw` while evaluating `future_impact` as a field/year percentile so large fields and older cohorts do not dominate the benchmark target. The labels file can also be a manually supplied JSONL or CSV with `paper_id` and a numeric label such as future normalized citations, BIP! impact class, future patent/policy counts, or a combined benchmark target. The report writes `impact_validity_evaluation.json/md` and `impact_credibility_scorecard.json/md` with `ranking_paper_count`, `label_paper_count`, `score_label_match_rate`, `coverage_examples` (`unmatched_score_ids` and `unmatched_label_ids`), `spearman_correlation`, `kendall_tau_b`, `pairwise_accuracy`, `ndcg_at_top_k`, top-k precision/recall, field slices, bootstrap confidence intervals, a permutation random baseline, `significant_vs_random`, outlier robustness checks, and a conservative credibility scorecard. The scorecard separates `high_credibility`, `moderate_credibility`, `low_credibility`, `not_credible`, and `insufficient_validation_data`, so a high point estimate cannot hide low coverage, random-like significance, weak field slices, or outlier-sensitive top-k quality. The project-readiness warns when a validity report is present but not statistically supported or has low `score_label_match_rate`, so a random-like or sparse-label score cannot be presented as validated impact accuracy. This is the preferred way to claim that `final_impact_score` has external or future-window validity; without such labels, the system should report evidence coverage and benchmark proxies, not validated impact accuracy.
 
 ## Public Benchmarks
 
@@ -285,6 +574,64 @@ BASE_URL=http://localhost:8000/v1 MODEL=local-impact-judge LIMIT=200 \
   scripts/run_sciimpact_model_eval.sh runs/sciimpact-model-eval
 ```
 
+`evaluate-sciimpact-predictions` writes `sciimpact_model_eval.json/md`, `sciimpact_model_credibility_scorecard.json/md`, row-level outputs, wrong examples, and error analysis. The scorecard gates direct model credibility on coverage, one-sided binomial significance against a random 0.5 A/B baseline, overall SciImpact accuracy, and dimension/item-type slice stability, so a model cannot be promoted from a small smoke or random-like slice result.
+
+After evaluating multiple held-out seeds, summarize them into one report-facing gate:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli summarize-sciimpact-model-credibility \
+  --eval runs/my-sciimpact-model/seed23/eval \
+  --eval runs/my-sciimpact-model/seed47/eval \
+  --eval runs/my-sciimpact-model/seed71/eval \
+  --output runs/my-sciimpact-model/credibility_summary
+```
+
+This writes `sciimpact_model_credibility_summary.json/md` with pooled accuracy, mean/min seed accuracy, seed stability, weak dimension/item-type slices, and a final `high_credibility` / `moderate_credibility` / `not_credible` decision. Use the summary, not a single seed, for model-promotion claims.
+
+Compare a candidate model against the current default before changing deployment recommendations:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli compare-sciimpact-model-candidate \
+  --baseline-summary runs/current-default/credibility_summary \
+  --candidate-summary runs/candidate-model/credibility_summary \
+  --output runs/candidate-model/promotion_gate
+```
+
+This writes `sciimpact_model_candidate_gate.json/md`. The default gate requires at least three candidate evaluations, a pooled accuracy gain, no worst-seed accuracy regression, no material seed-stability regression, no additional weak slices, no material worst-slice regression, and no drop in cross-seed credibility status. Use `decision=promote` before replacing the recommended local judge; otherwise keep the current model and report the candidate as a negative experiment.
+
+Export the weak-slice errors that explain the credibility warnings:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli export-sciimpact-model-weak-slice-errors \
+  --eval runs/my-sciimpact-model/seed23/eval \
+  --eval runs/my-sciimpact-model/seed47/eval \
+  --eval runs/my-sciimpact-model/seed71/eval \
+  --output runs/my-sciimpact-model/weak_slice_errors
+```
+
+This writes `sciimpact_model_weak_slice_error_pack.json/md` and `sciimpact_model_weak_slice_errors.jsonl`. By default the pack is marked `diagnostic_only`, because held-out/test errors should not be used as training data. Regenerate it from train-split predictions and pass `--training-source` before using rows as training candidates.
+
+When the matching SFT files are available, add one `--sft` per `--eval` to export directly trainable rows:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli export-sciimpact-model-weak-slice-errors \
+  --eval runs/my-train-eval/model_eval/eval \
+  --sft runs/my-train-eval/sample/sciimpact_sft_stratified.jsonl \
+  --training-source \
+  --output runs/my-train-eval/weak_slice_training_candidates
+```
+
+This additionally writes `train_pairwise_sft.jsonl`, `train_pairwise_dpo.jsonl`, and `weak_slice_source_records.jsonl`, each annotated with `matched_weak_slices` and the model's wrong prediction metadata.
+
+Run the small weak-slice DPO continuation only after the candidate data is prepared and the target GPUs are available:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  scripts/train_sciimpact_weak_slice_dpo.sh
+```
+
+The script validates `train_pairwise_dpo.jsonl` before training and defaults to `MAX_STEPS=32`, `MAX_LENGTH=4096`, and the current source-task DPO adapter as `BASE_ADAPTER`. Treat this as a controlled candidate experiment; promotion still requires held-out three-seed evaluation and the cross-seed credibility summary.
+
 Evaluate an existing paper ranking against pairwise impact labels:
 
 ```bash
@@ -294,7 +641,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli evaluate-pairwise-impact \
   --output runs/my-run/sciimpact_eval
 ```
 
-This reports pairwise accuracy, non-tie accuracy, coverage rate, tie rate, and per-dimension/per-field metrics. Run the fixture smoke without downloading the full benchmark:
+This writes `pairwise_evaluation.json/md` and `pairwise_credibility_scorecard.json/md`. The evaluation reports pairwise accuracy, non-tie accuracy, coverage rate, tie rate, per-dimension/per-field metrics, and a scorecard based on coverage, one-sided binomial significance versus a random 0.5 baseline, benchmark accuracy, tie rate, and slice stability. Run the fixture smoke without downloading the full benchmark:
 
 ```bash
 scripts/run_sciimpact_smoke.sh runs/sciimpact-smoke
@@ -408,7 +755,7 @@ Outputs:
 
 `mvp_summary.json` is the machine-readable one-page summary. `mvp_summary.md` is the report-ready Markdown version. They collect claim scope, data readiness, scoring version, top paper/author/institution/field/year previews, judge reliability, proxy quality, anomaly flags, run-level stability, per-paper stability counts, bootstrap score-uncertainty counts, and a conservative larger-pilot readiness flag.
 
-`project_readiness.json` and `project_readiness.md` are the final quality-gate reports. They combine artifact completeness, validation, judge reliability, scoring config, ranking scope, gold/proxy evidence, stability, anomaly risk, fine-tuning preflight, and claim boundaries into a single decision: `reportable`, `needs_improvement`, or `blocked`. They also report `evidence_level`: `gold_validated`, `proxy_supported`, `proxy_only_needs_review`, or `no_external_or_proxy_evidence`. The report includes a reproducibility summary from `run_manifest.json`: input hashes, normalized record count, top-k, judge/model, prompt version, scoring version, git revision, and dirty-worktree flag.
+`project_readiness.json` and `project_readiness.md` are the final quality-gate reports. They combine artifact completeness, validation, judge reliability, scoring config, ranking scope, gold/proxy evidence, external evidence readiness, stability, anomaly risk, fine-tuning preflight, and claim boundaries into a single decision: `reportable`, `needs_improvement`, or `blocked`. If external evidence is usable but not strong enough for high-credibility claims, project readiness remains reportable only with disclosure and is marked `needs_improvement`. They also report `evidence_level`: `gold_validated`, `proxy_supported`, `proxy_only_needs_review`, or `no_external_or_proxy_evidence`. The report includes a reproducibility summary from `run_manifest.json`: input hashes, normalized record count, top-k, judge/model, prompt version, scoring version, git revision, and dirty-worktree flag.
 
 You can regenerate or print that decision for an existing run:
 
@@ -424,7 +771,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli report-bundle \
   --output runs/example/report_bundle
 ```
 
-The bundle writes `README.md` and `bundle_manifest.json`, then copies the main report-facing artifacts: paper/entity rankings, `mvp_summary.md`, `benchmark_summary.md`, `project_readiness.md`, evaluation reports, evidence CSVs, `scoring_config.json`, `artifact_index.json`, and `run_manifest.json`.
+The bundle writes `README.md` and `bundle_manifest.json`, then copies the main report-facing artifacts. For full pipeline runs, it includes paper/entity rankings, `mvp_summary.md`, `benchmark_summary.md`, `project_readiness.md`, `impact_claim_certificate.md`, evaluation reports, evidence CSVs, `scoring_config.json`, `artifact_index.json`, and `run_manifest.json`. For `model-score-dataset` directories, it also includes `impact_scores.csv/jsonl`, `model_impact_report.json/md`, `impact_score_cards.json/md`, `model_credibility_card.json/md`, `calibration_profile_card.json/md`, `pairwise_judgments.jsonl`, external evidence readiness files, validity reports when present, and the claim certificate, with **Model Score Dataset**, **Model Credibility**, and **Calibration Profile** summaries in the bundle README. The manifest includes `bundle_decision`; for model-score runs this uses the model-score impact claim certificate instead of full-pipeline readiness, so a valid model-score handoff is not mislabeled as blocked because author/institution artifacts are absent. The Model Credibility and Calibration Profile sections include `served_model`, `model_identity_match`, and `calibration_model_identity_match`, preventing one model's benchmark or calibration profile from being reused for another local service.
 
 `evaluation.json` and `evaluation.md` report judge reliability metrics such as parse success, invalid selections, empty selections, duplicate selections, and top-k compliance. They are reliability checks, not human correctness labels.
 

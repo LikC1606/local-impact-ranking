@@ -36,6 +36,8 @@ test -s "${OUTPUT}/converted/manifest.json"
 test -s "${OUTPUT}/rankings/sciimpact_text_prior.csv"
 test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.json"
 test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.md"
+test -s "${OUTPUT}/pairwise_eval/pairwise_credibility_scorecard.json"
+test -s "${OUTPUT}/pairwise_eval/pairwise_credibility_scorecard.md"
 
 accuracy="$(
   PYTHONPATH=src "${PYTHON_BIN}" - <<'PY' "${OUTPUT}/pairwise_eval/pairwise_evaluation.json"

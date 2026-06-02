@@ -1,0 +1,62 @@
+{
+  "profile": {
+    "name": "sciimpact-qwen32b-heldout-p50",
+    "method": "empirical_bin_accuracy",
+    "source_benchmark": "SciImpact",
+    "source_model": "local-impact-judge",
+    "compatible_models": [
+      "local-impact-judge",
+      "local-impact-judge-source-task-dpo"
+    ],
+    "source_base_model": "deepseek-r1-distill-qwen-32b",
+    "source_run": "runs/sciimpact-qwen32b-confidence-heldout-p50-c4",
+    "created_date": "2026-05-28",
+    "scope": "Approximate confidence calibration for constrained pairwise paper-impact judgments.",
+    "limitations": "Derived from 150 held-out SciImpact calibration examples. Use as a reporting trust prior, not as domain-specific ground truth."
+  },
+  "summary": {
+    "total_examples": 150,
+    "covered_examples": 150,
+    "correct_examples": 99,
+    "coverage_rate": 1.0,
+    "accuracy": 0.66,
+    "mean_confidence": 0.74602
+  },
+  "calibration": {
+    "scored_examples": 150,
+    "bin_count": 5,
+    "ece": 0.086021,
+    "mce": 0.160367,
+    "brier_score": 0.221465,
+    "overconfidence_gap": 0.08602,
+    "bins": [
+      {
+        "bin": "0.4-0.6",
+        "lower": 0.4,
+        "upper": 0.6,
+        "count": 32,
+        "accuracy": 0.53125,
+        "mean_confidence": 0.552365,
+        "calibration_gap": 0.021115
+      },
+      {
+        "bin": "0.6-0.8",
+        "lower": 0.6,
+        "upper": 0.8,
+        "count": 65,
+        "accuracy": 0.646154,
+        "mean_confidence": 0.703507,
+        "calibration_gap": 0.057353
+      },
+      {
+        "bin": "0.8-1.0",
+        "lower": 0.8,
+        "upper": 1.0,
+        "count": 53,
+        "accuracy": 0.754717,
+        "mean_confidence": 0.915084,
+        "calibration_gap": 0.160367
+      }
+    ]
+  }
+}

@@ -21,6 +21,10 @@ EVIDENCE_FILES = {
     "gold_baseline_comparison": "reports/gold_baseline_comparison.json",
     "proxy_evaluation": "reports/proxy_evaluation.json",
     "baseline_comparison": "reports/baseline_comparison.json",
+    "impact_validity_evaluation": "reports/impact_validity_evaluation.json",
+    "citation_cutoff_audit": "reports/citation_cutoff_audit.json",
+    "external_evidence_readiness": "reports/external_evidence_readiness.json",
+    "external_evidence_paper_coverage": "reports/external_evidence_paper_coverage.csv",
     "anomaly_report": "reports/anomaly_report.json",
     "stability_report": "reports/stability_report.json",
     "paper_score_uncertainty": "reports/paper_score_uncertainty_report.json",
@@ -45,6 +49,9 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
     scoring = _read_json(root / "reports" / "scoring_config.json")
     finetuning = _read_json(root / "finetuning" / "finetuning_preflight.json")
     baseline = _read_json(root / "reports" / "baseline_comparison.json")
+    impact_validity = _read_json(root / "reports" / "impact_validity_evaluation.json")
+    citation_cutoff_audit = _read_json(root / "reports" / "citation_cutoff_audit.json")
+    external_evidence = _read_json(root / "reports" / "external_evidence_readiness.json")
     manifest = _read_json(root / "run_manifest.json")
 
     checks = _evaluate_checks(
@@ -58,6 +65,13 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
         stability=stability,
         anomaly=anomaly,
         scoring=scoring,
+        impact_validity=impact_validity,
+        citation_cutoff_audit=citation_cutoff_audit,
+        external_evidence=external_evidence,
+    )
+    impact_validity_quality = _impact_validity_quality(impact_validity)
+    citation_cutoff_audit_quality = _citation_cutoff_audit_quality(
+        citation_cutoff_audit
     )
     decision = _decision(checks)
     return {
@@ -77,6 +91,9 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
             "gold_candidate_position": _gold_candidate_position_quality(gold_position),
             "gold_baseline_comparison": _gold_baseline_comparison_quality(gold_baseline),
             "proxy": _proxy_quality(proxy),
+            "impact_validity": impact_validity_quality,
+            "citation_cutoff_audit": citation_cutoff_audit_quality,
+            "external_evidence": _external_evidence_quality(external_evidence),
             "stability": _stability_quality(stability),
             "anomaly": _anomaly_quality(anomaly),
             "scoring": {
@@ -89,7 +106,14 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
         "artifacts": artifacts,
         "evidence_files": dict(EVIDENCE_FILES),
         "reproducibility": _reproducibility_summary(manifest),
-        "recommended_next_actions": _recommended_next_actions(checks, gold, finetuning),
+        "recommended_next_actions": _recommended_next_actions(
+            checks,
+            gold,
+            finetuning,
+            external_evidence,
+            impact_validity,
+            citation_cutoff_audit,
+        ),
         "limitations": [
             "This report supports dataset-local impact reporting only.",
             "Gold metrics evaluate benchmark reference selection when labels exist; they are not global impact truth.",
@@ -116,6 +140,10 @@ def write_project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
 
 def required_artifacts_for_readiness() -> list[str]:
     excluded = {
+        "reports/impact_validity_evaluation.json",
+        "reports/impact_validity_evaluation.md",
+        "reports/citation_cutoff_audit.json",
+        "reports/citation_cutoff_audit.md",
         "reports/project_readiness.json",
         "reports/project_readiness.md",
     }
@@ -129,8 +157,11 @@ def render_project_readiness_markdown(report: dict[str, Any]) -> str:
     data = quality.get("data", {})
     gold = quality.get("gold", {})
     proxy = quality.get("proxy", {})
+    impact_validity = quality.get("impact_validity", {})
+    citation_cutoff_audit = quality.get("citation_cutoff_audit", {})
     gold_position = quality.get("gold_candidate_position", {})
     gold_baseline = quality.get("gold_baseline_comparison", {})
+    external_evidence = quality.get("external_evidence", {})
     stability = quality.get("stability", {})
     anomaly = quality.get("anomaly", {})
     scoring = quality.get("scoring", {})
@@ -170,9 +201,31 @@ def render_project_readiness_markdown(report: dict[str, Any]) -> str:
         f"| judge_ndcg_delta_vs_best_baseline | {_number(gold_baseline.get('mean_ndcg_delta'))} |",
         f"| judge_ndcg_delta_ci95 | {_ci(gold_baseline.get('mean_ndcg_delta_ci95'))} |",
         f"| statistically_positive_ndcg_delta | {_yes_no(gold_baseline.get('statistically_positive_ndcg_delta'))} |",
+        f"| impact_validity_status | {_text(impact_validity.get('status'))} |",
+        f"| impact_validity_match_rate | {_number(impact_validity.get('score_label_match_rate'))} |",
+        f"| impact_validity_spearman | {_number(impact_validity.get('spearman_correlation'))} |",
+        f"| impact_validity_pairwise_accuracy | {_number(impact_validity.get('pairwise_accuracy'))} |",
+        f"| impact_validity_ndcg_at_top_k | {_number(impact_validity.get('ndcg_at_top_k'))} |",
+        f"| impact_validity_significant_vs_random | {_yes_no(impact_validity.get('significant_vs_random'))} |",
+        f"| impact_validity_p_value | {_number(impact_validity.get('p_value'))} |",
+        f"| impact_credibility_status | {_text(impact_validity.get('credibility_scorecard_status'))} |",
+        f"| impact_credibility_grade | {_text(impact_validity.get('credibility_grade'))} |",
+        f"| high_validation_credibility | {_yes_no(impact_validity.get('can_claim_high_validation_credibility'))} |",
+        f"| citation_cutoff_audit_status | {_text(citation_cutoff_audit.get('status'))} |",
+        f"| citation_cutoff_future_year_count | {citation_cutoff_audit.get('future_year_count', 0)} |",
+        f"| citation_cutoff_metadata_coverage | {_number(citation_cutoff_audit.get('citation_cutoff_year_coverage'))} |",
+        f"| external_evidence_status | {_text(external_evidence.get('status'))} |",
+        f"| can_claim_high_credibility | {_yes_no(external_evidence.get('can_claim_high_credibility'))} |",
+        f"| external_query_id_coverage | {_number(external_evidence.get('external_query_id_coverage'))} |",
+        f"| openalex_enriched_coverage | {_number(external_evidence.get('openalex_enriched_coverage'))} |",
+        f"| opencitations_enriched_coverage | {_number(external_evidence.get('opencitations_enriched_coverage'))} |",
+        f"| field_year_percentile_coverage | {_number(external_evidence.get('field_year_percentile_coverage'))} |",
+        f"| materialized_internal_edge_count | {external_evidence.get('materialized_internal_edge_count', 0)} |",
         f"| unsupported_selection_rate | {_number(proxy.get('unsupported_selection_rate'))} |",
         f"| leave_one_target_out_average_retention_rate | {_number(stability.get('leave_one_target_out_average_retention_rate'))} |",
         f"| highest_paper_single_edge_dominance_share | {_number(anomaly.get('highest_paper_single_edge_dominance_share'))} |",
+        f"| self_citation_risk_level | {_text(anomaly.get('self_citation_risk_level'))} |",
+        f"| self_citation_credit_share | {_number(anomaly.get('self_citation_credit_share'))} |",
         "",
         "## Scoring And Training",
         "",
@@ -248,6 +301,9 @@ def _evaluate_checks(
     stability: dict[str, Any],
     anomaly: dict[str, Any],
     scoring: dict[str, Any],
+    impact_validity: dict[str, Any],
+    citation_cutoff_audit: dict[str, Any],
+    external_evidence: dict[str, Any],
 ) -> dict[str, list[str]]:
     passed_checks: list[str] = []
     failed_checks: list[str] = []
@@ -345,6 +401,52 @@ def _evaluate_checks(
             bool(judge_vs_best.get("statistically_positive_ndcg_delta", False)),
             "Judge beats the best simple baseline in mean, but the bootstrap NDCG delta is not statistically positive.",
         )
+    external_decision = external_evidence.get("decision", {})
+    warn(
+        "external_evidence_ready_for_high_credibility",
+        bool(external_decision.get("can_claim_high_credibility")),
+        "External evidence coverage is incomplete; report scores with external-evidence disclosure and avoid high-credibility claims.",
+    )
+    if _has_impact_validity_evidence(impact_validity):
+        impact_decision = impact_validity.get("summary", {}).get("decision", {})
+        significance = impact_validity.get("statistical_significance", {})
+        warn(
+            "impact_validity_statistically_supported",
+            impact_decision.get("status") in {
+                "externally_supported",
+                "usable_with_disclosure",
+            }
+            and bool(significance.get("significant_vs_random", False)),
+            "Impact validity results are not statistically supported against the random baseline; do not claim validated impact accuracy.",
+        )
+        warn(
+            "impact_validity_match_coverage_reasonable",
+            _float(
+                impact_validity.get("summary", {}).get(
+                    "score_label_match_rate",
+                    1.0,
+                )
+            )
+            >= 0.5,
+            "Impact validity label coverage is low; matched labels cover less than half of the scored ranking table.",
+        )
+        cutoff_decision = citation_cutoff_audit.get("decision", {})
+        require(
+            "citation_cutoff_audit_no_future_leakage",
+            cutoff_decision.get("status") != "failed",
+            "Citation cutoff audit found post-cutoff citation years; regenerate cutoff scoring input before reporting future-window validity.",
+        )
+        warn(
+            "citation_cutoff_audit_available_for_impact_validity",
+            bool(citation_cutoff_audit) and bool(cutoff_decision),
+            "Impact validity evidence is present, but citation cutoff audit is missing; run audit-citation-cutoff before claiming future-window validity.",
+        )
+        if cutoff_decision and cutoff_decision.get("status") != "failed":
+            warn(
+                "citation_cutoff_audit_passed",
+                cutoff_decision.get("status") == "passed",
+                "Citation cutoff audit did not fail, but cutoff metadata is incomplete; disclose the cutoff-audit warning.",
+            )
 
     leave_one_out = stability.get("leave_one_target_out", {})
     warn(
@@ -357,6 +459,12 @@ def _evaluate_checks(
         "single_edge_dominance_not_extreme",
         dominance < 0.75,
         "Top paper scores are dominated by one citation edge; report as fragile.",
+    )
+    self_citation = anomaly.get("self_citation_risk", {})
+    warn(
+        "self_citation_risk_not_high",
+        self_citation.get("risk_level") != "high",
+        "Selected-reference credit has high self-citation concentration; disclose this before reporting the ranking.",
     )
     return {
         "passed_checks": passed_checks,
@@ -391,6 +499,9 @@ def _recommended_next_actions(
     checks: dict[str, list[str]],
     gold: dict[str, Any],
     finetuning: dict[str, Any],
+    external_evidence: dict[str, Any],
+    impact_validity: dict[str, Any],
+    citation_cutoff_audit: dict[str, Any],
 ) -> list[str]:
     actions: list[str] = []
     failed = set(checks["failed_checks"])
@@ -413,6 +524,28 @@ def _recommended_next_actions(
         actions.append("Run on a larger or more representative corpus to improve stability.")
     if "single_edge_dominance_not_extreme" in warnings:
         actions.append("Review single-edge dominated papers before using them in a public ranking.")
+    if "external_evidence_ready_for_high_credibility" in warnings:
+        actions.extend(_external_evidence_next_actions(external_evidence))
+    if "impact_validity_statistically_supported" in warnings:
+        actions.append(
+            "Do not claim validated impact accuracy; report the score as dataset-local exploratory evidence until future-window validity beats the random baseline."
+        )
+    if "impact_validity_match_coverage_reasonable" in warnings:
+        actions.append(
+            "Improve entity matching or label coverage before using the validity report as high-credibility evidence."
+        )
+    if "citation_cutoff_audit_no_future_leakage" in failed:
+        actions.append(
+            "Regenerate the scoring input with apply-citation-cutoff, then rerun audit-citation-cutoff before using future-window validity claims."
+        )
+    if "citation_cutoff_audit_available_for_impact_validity" in warnings:
+        actions.append(
+            "Run audit-citation-cutoff on the cutoff scoring input and attach citation_cutoff_audit.json/md to the run reports."
+        )
+    if "citation_cutoff_audit_passed" in warnings:
+        actions.append(
+            "Improve cutoff metadata coverage or disclose the citation cutoff audit warning with the validity report."
+        )
     decision = finetuning.get("decision", {})
     if decision.get("can_start_dpo_smoke"):
         actions.append("Run a small held-out DPO smoke only after preserving train/dev/test splits.")
@@ -530,6 +663,106 @@ def _proxy_quality(proxy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _impact_validity_quality(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    decision = summary.get("decision", {})
+    significance = report.get("statistical_significance", {})
+    scorecard = report.get("credibility_scorecard", {})
+    return {
+        "status": decision.get("status", "not_available"),
+        "reason": decision.get("reason", ""),
+        "matched_paper_count": summary.get("matched_paper_count", 0),
+        "ranking_paper_count": summary.get("ranking_paper_count", 0),
+        "label_paper_count": summary.get("label_paper_count", 0),
+        "score_label_match_rate": summary.get("score_label_match_rate", 0.0),
+        "label_match_rate": summary.get("label_match_rate", 0.0),
+        "spearman_correlation": summary.get("spearman_correlation", 0.0),
+        "kendall_tau_b": summary.get("kendall_tau_b", 0.0),
+        "pairwise_accuracy": summary.get("pairwise_accuracy", 0.0),
+        "ndcg_at_top_k": summary.get("ndcg_at_top_k", 0.0),
+        "top_k_precision": summary.get("top_k_precision", 0.0),
+        "top_k_recall": summary.get("top_k_recall", 0.0),
+        "significance_status": significance.get("status", "not_available"),
+        "significant_vs_random": bool(
+            significance.get("significant_vs_random", False)
+        ),
+        "tested_metric": significance.get("tested_metric"),
+        "p_value": significance.get("p_value", 1.0),
+        "permutation_null_mean": significance.get("permutation_null_mean", 0.0),
+        "credibility_scorecard_status": scorecard.get("status"),
+        "credibility_grade": scorecard.get("grade"),
+        "can_claim_high_validation_credibility": bool(
+            scorecard.get("can_claim_high_validation_credibility", False)
+        ),
+    }
+
+
+def _citation_cutoff_audit_quality(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    decision = report.get("decision", {})
+    return {
+        "status": decision.get("status", "not_available"),
+        "reason": decision.get("reason", ""),
+        "paper_count": summary.get("paper_count", 0),
+        "cutoff_year": summary.get("cutoff_year"),
+        "papers_with_yearly_citation_history": summary.get(
+            "papers_with_yearly_citation_history",
+            0,
+        ),
+        "papers_with_future_years": summary.get("papers_with_future_years", 0),
+        "future_year_count": summary.get("future_year_count", 0),
+        "citation_cutoff_year_coverage": summary.get(
+            "citation_cutoff_year_coverage",
+            0.0,
+        ),
+    }
+
+
+def _external_evidence_quality(external_evidence: dict[str, Any]) -> dict[str, Any]:
+    decision = external_evidence.get("decision", {})
+    identifiers = external_evidence.get("identifier_coverage", {})
+    sources = external_evidence.get("source_coverage", {})
+    signals = external_evidence.get("signal_coverage", {})
+    graph = external_evidence.get("graph_evidence", {})
+    return {
+        "status": decision.get("status", "unknown"),
+        "can_claim_high_credibility": bool(
+            decision.get("can_claim_high_credibility", False)
+        ),
+        "reason": decision.get("reason", ""),
+        "external_query_id_coverage": identifiers.get(
+            "external_query_id_coverage",
+            0.0,
+        ),
+        "doi_coverage": identifiers.get("doi_coverage", 0.0),
+        "openalex_id_coverage": identifiers.get("openalex_id_coverage", 0.0),
+        "openalex_enriched_coverage": sources.get("openalex_enriched_coverage", 0.0),
+        "opencitations_enriched_coverage": sources.get(
+            "opencitations_enriched_coverage",
+            0.0,
+        ),
+        "citation_count_coverage": signals.get("citation_count_coverage", 0.0),
+        "field_year_percentile_coverage": signals.get(
+            "field_year_percentile_coverage",
+            0.0,
+        ),
+        "internal_reference_edge_count": graph.get("internal_reference_edge_count", 0),
+        "materialized_internal_edge_count": graph.get(
+            "materialized_internal_edge_count",
+            0,
+        ),
+    }
+
+
+def _external_evidence_next_actions(external_evidence: dict[str, Any]) -> list[str]:
+    recommendations = external_evidence.get("recommendations")
+    if isinstance(recommendations, list) and recommendations:
+        return [str(item) for item in recommendations]
+    return [
+        "Run enrich-openalex and enrich-opencitations, then regenerate external evidence readiness.",
+    ]
+
+
 def _reproducibility_summary(manifest: dict[str, Any]) -> dict[str, Any]:
     input_info = manifest.get("input", {})
     run = manifest.get("run", {})
@@ -587,6 +820,14 @@ def _has_proxy_evidence(proxy: dict[str, Any]) -> bool:
     )
 
 
+def _has_impact_validity_evidence(report: dict[str, Any]) -> bool:
+    summary = report.get("summary", {})
+    if int(summary.get("matched_paper_count", 0) or 0) > 0:
+        return True
+    decision = summary.get("decision", {})
+    return bool(decision.get("status")) and decision.get("status") != "not_available"
+
+
 def _stability_quality(stability: dict[str, Any]) -> dict[str, Any]:
     leave_one_out = stability.get("leave_one_target_out", {})
     return {
@@ -603,6 +844,7 @@ def _stability_quality(stability: dict[str, Any]) -> dict[str, Any]:
 
 def _anomaly_quality(anomaly: dict[str, Any]) -> dict[str, Any]:
     missing = anomaly.get("missing_metadata", {})
+    self_citation = anomaly.get("self_citation_risk", {})
     return {
         "references_missing_title_count": missing.get("references_missing_title_count", 0),
         "references_missing_author_count": missing.get("references_missing_author_count", 0),
@@ -612,6 +854,12 @@ def _anomaly_quality(anomaly: dict[str, Any]) -> dict[str, Any]:
         ),
         "highest_paper_single_edge_dominance_share": _highest_paper_single_edge_share(
             anomaly
+        ),
+        "self_citation_risk_level": self_citation.get("risk_level", "not_available"),
+        "self_citation_edge_rate": self_citation.get("self_citation_edge_rate", 0.0),
+        "self_citation_credit_share": self_citation.get(
+            "self_citation_credit_share",
+            0.0,
         ),
     }
 

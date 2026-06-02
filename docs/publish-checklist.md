@@ -9,6 +9,7 @@ Use this before uploading the repository to GitHub or preparing a release.
 - Examples under `examples/`.
 - Scripts under `scripts/`.
 - Documentation under `docs/`.
+- Small reusable configuration profiles under `configs/`, including `configs/calibration/`.
 - GitHub Actions workflow under `.github/workflows/tests.yml`.
 
 ## Exclude
@@ -42,4 +43,5 @@ Keep the public claim conservative:
 - The project computes dataset-local paper, author, institution, field, and year influence.
 - It does not claim global scientific impact without external graph calibration.
 - Benchmark evidence such as PreScience evaluates reference-selection quality, not universal impact truth.
+- Bundled calibration profiles under `configs/calibration/` are reusable reporting priors. They are not replacements for domain-specific validation.
 - `report-bundle` creates shareable run artifacts, but generated bundles remain under `runs/` by default and should not be committed unless intentionally published separately.

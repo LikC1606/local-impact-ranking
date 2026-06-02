@@ -6,6 +6,9 @@ INPUT="${INPUT:-data/sciimpact/source/sft_data/paper_impact_sft_test_clean.jsonl
 BASE_URL="${BASE_URL:-http://localhost:8000/v1}"
 MODEL="${MODEL:-local-impact-judge}"
 LIMIT="${LIMIT:-200}"
+MAX_TOKENS="${MAX_TOKENS:-512}"
+CONCURRENCY="${CONCURRENCY:-1}"
+ANSWER_FORMAT="${ANSWER_FORMAT:-freeform}"
 PYTHON_BIN="${PYTHON_BIN:-/root/miniconda3/envs/air/bin/python3.11}"
 
 if [[ ! -s "${INPUT}" ]]; then
@@ -24,17 +27,26 @@ PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli generate-sciimpact-pr
   --base-url "${BASE_URL}" \
   --model "${MODEL}" \
   --limit "${LIMIT}" \
+  --max-tokens "${MAX_TOKENS}" \
+  --concurrency "${CONCURRENCY}" \
+  --answer-format "${ANSWER_FORMAT}" \
   --resume
 
 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli evaluate-sciimpact-predictions \
   --sft "${INPUT}" \
   --predictions "${OUTPUT}/predictions.jsonl" \
-  --output "${OUTPUT}/eval"
+  --output "${OUTPUT}/eval" \
+  --limit "${LIMIT}"
 
 test -s "${OUTPUT}/predictions.jsonl"
 test -s "${OUTPUT}/sciimpact_prediction_manifest.json"
 test -s "${OUTPUT}/eval/sciimpact_model_eval.json"
 test -s "${OUTPUT}/eval/sciimpact_model_eval.md"
+test -s "${OUTPUT}/eval/sciimpact_model_credibility_scorecard.json"
+test -s "${OUTPUT}/eval/sciimpact_model_credibility_scorecard.md"
+test -s "${OUTPUT}/eval/sciimpact_model_eval_rows.jsonl"
+test -s "${OUTPUT}/eval/sciimpact_model_error_analysis.json"
+test -s "${OUTPUT}/eval/sciimpact_model_error_analysis.md"
 
 accuracy="$(
   PYTHONPATH=src "${PYTHON_BIN}" - <<'PY' "${OUTPUT}/eval/sciimpact_model_eval.json"

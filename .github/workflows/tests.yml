@@ -28,3 +28,6 @@ jobs:
 
       - name: Run quickstart smoke
         run: scripts/run_quickstart.sh runs/quickstart
+
+      - name: Run deliverable check
+        run: scripts/run_deliverable_check.sh runs/deliverable-check

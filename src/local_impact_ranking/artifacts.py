@@ -29,6 +29,15 @@ RUN_ARTIFACTS = [
     "reports/gold_baseline_comparison.md",
     "reports/context_coverage.json",
     "reports/data_readiness.json",
+    "reports/external_evidence_readiness.json",
+    "reports/external_evidence_readiness.md",
+    "reports/external_evidence_paper_coverage.csv",
+    "reports/impact_validity_evaluation.json",
+    "reports/impact_validity_evaluation.md",
+    "reports/impact_credibility_scorecard.json",
+    "reports/impact_credibility_scorecard.md",
+    "reports/citation_cutoff_audit.json",
+    "reports/citation_cutoff_audit.md",
     "reports/baseline_comparison.json",
     "reports/proxy_evaluation.json",
     "reports/anomaly_report.json",
@@ -72,21 +81,51 @@ RUN_ARTIFACTS = [
 ]
 
 
-def artifact_index(root: str | Path, relative_paths: list[str]) -> dict[str, Any]:
+OPTIONAL_RUN_ARTIFACTS = {
+    "reports/impact_validity_evaluation.json",
+    "reports/impact_validity_evaluation.md",
+    "reports/impact_credibility_scorecard.json",
+    "reports/impact_credibility_scorecard.md",
+    "reports/citation_cutoff_audit.json",
+    "reports/citation_cutoff_audit.md",
+}
+
+
+def artifact_index(
+    root: str | Path,
+    relative_paths: list[str],
+    *,
+    optional_paths: set[str] | None = None,
+) -> dict[str, Any]:
     base = Path(root)
+    optional = optional_paths or set()
     artifacts = []
     for relative_path in relative_paths:
         path = base / relative_path
         exists = path.exists()
+        required = relative_path not in optional
         artifacts.append(
             {
                 "path": relative_path,
                 "exists": exists,
                 "size_bytes": path.stat().st_size if exists and path.is_file() else 0,
+                "required": required,
             }
         )
+    required_artifacts = [artifact for artifact in artifacts if artifact["required"]]
+    optional_artifacts = [artifact for artifact in artifacts if not artifact["required"]]
+    missing_required_count = sum(
+        1 for artifact in required_artifacts if not artifact["exists"]
+    )
+    missing_optional_count = sum(
+        1 for artifact in optional_artifacts if not artifact["exists"]
+    )
     return {
         "artifact_count": len(artifacts),
-        "missing_count": sum(1 for artifact in artifacts if not artifact["exists"]),
+        "required_artifact_count": len(required_artifacts),
+        "optional_artifact_count": len(optional_artifacts),
+        "missing_count": missing_required_count,
+        "missing_required_count": missing_required_count,
+        "missing_optional_count": missing_optional_count,
         "artifacts": artifacts,
     }

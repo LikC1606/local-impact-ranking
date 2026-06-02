@@ -78,6 +78,8 @@ def test_evaluate_pairwise_labels_counts_correct_wrong_ties_and_coverage(tmp_pat
     assert report["by_field"]["AI"]["pairwise_accuracy"] == 0.5
     assert report["by_field"]["Biology"]["tie_rate"] == 1.0
     assert report["examples"][0]["pair_id"] == "pair-1"
+    assert report["credibility_scorecard"]["status"] == "insufficient_validation_data"
+    assert report["statistical_significance"]["status"] == "insufficient_validation_data"
 
 
 def test_write_pairwise_evaluation_writes_json_and_markdown(tmp_path):
@@ -91,10 +93,16 @@ def test_write_pairwise_evaluation_writes_json_and_markdown(tmp_path):
 
     assert report["summary"]["covered_pairs"] == 3
     assert (output / "pairwise_evaluation.json").exists()
+    assert (output / "pairwise_credibility_scorecard.json").exists()
+    assert (output / "pairwise_credibility_scorecard.md").exists()
     markdown = (output / "pairwise_evaluation.md").read_text(encoding="utf-8")
     assert markdown.startswith("# Pairwise Impact Evaluation\n")
     assert "| pairwise_accuracy | 0.333 |" in markdown
     assert "| citation | 2 | 2 | 0.500 |" in markdown
+    scorecard_md = (output / "pairwise_credibility_scorecard.md").read_text(
+        encoding="utf-8"
+    )
+    assert scorecard_md.startswith("# Pairwise Credibility Scorecard\n")
 
 
 def test_cli_evaluate_pairwise_impact_writes_report(tmp_path):
@@ -119,4 +127,73 @@ def test_cli_evaluate_pairwise_impact_writes_report(tmp_path):
 
     assert result.exit_code == 0
     assert "pairwise_accuracy=0.333" in result.output
+    assert "credibility=" in result.output
     assert (output / "pairwise_evaluation.json").exists()
+
+
+def test_pairwise_credibility_scorecard_marks_strong_benchmark_supported(tmp_path):
+    rankings = tmp_path / "rankings.csv"
+    labels = tmp_path / "pairwise_labels.jsonl"
+    with rankings.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["paper_id", "final_score"])
+        writer.writeheader()
+        for index in range(80):
+            writer.writerow({"paper_id": f"p{index:02d}", "final_score": 100 - index})
+    rows = []
+    for index in range(40):
+        rows.append(
+            {
+                "pair_id": f"pair-{index}",
+                "winner_id": f"p{index:02d}",
+                "loser_id": f"p{index + 40:02d}",
+                "impact_dimension": "citation" if index < 20 else "patent",
+                "field": "AI" if index < 20 else "Bio",
+            }
+        )
+    labels.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    report = evaluate_pairwise_labels(rankings, labels, score_column="final_score")
+
+    assert report["summary"]["pairwise_accuracy"] == 1.0
+    assert report["statistical_significance"]["significant_vs_random"] is True
+    scorecard = report["credibility_scorecard"]
+    assert scorecard["status"] == "high_credibility"
+    assert scorecard["grade"] == "A"
+    assert scorecard["checks"]["statistical_support"]["status"] == "pass"
+    assert scorecard["checks"]["slice_stability"]["status"] == "pass"
+
+
+def test_pairwise_credibility_scorecard_rejects_random_like_pairs(tmp_path):
+    rankings = tmp_path / "rankings.csv"
+    labels = tmp_path / "pairwise_labels.jsonl"
+    with rankings.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["paper_id", "final_score"])
+        writer.writeheader()
+        for index in range(80):
+            writer.writerow({"paper_id": f"p{index:02d}", "final_score": 100 - index})
+    rows = []
+    for index in range(40):
+        if index % 2 == 0:
+            winner_id = f"p{index:02d}"
+            loser_id = f"p{index + 40:02d}"
+        else:
+            winner_id = f"p{index + 40:02d}"
+            loser_id = f"p{index:02d}"
+        rows.append(
+            {
+                "pair_id": f"pair-{index}",
+                "winner_id": winner_id,
+                "loser_id": loser_id,
+                "impact_dimension": "citation",
+                "field": "AI",
+            }
+        )
+    labels.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    report = evaluate_pairwise_labels(rankings, labels, score_column="final_score")
+
+    assert report["summary"]["non_tie_pairwise_accuracy"] == 0.5
+    assert report["statistical_significance"]["significant_vs_random"] is False
+    scorecard = report["credibility_scorecard"]
+    assert scorecard["status"] == "not_credible"
+    assert scorecard["checks"]["statistical_support"]["status"] == "fail"

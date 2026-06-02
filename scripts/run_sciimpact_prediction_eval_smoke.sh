@@ -44,6 +44,8 @@ test -s "${OUTPUT}/input.jsonl"
 test -s "${OUTPUT}/oracle_predictions.jsonl"
 test -s "${OUTPUT}/model_eval/sciimpact_model_eval.json"
 test -s "${OUTPUT}/model_eval/sciimpact_model_eval.md"
+test -s "${OUTPUT}/model_eval/sciimpact_model_credibility_scorecard.json"
+test -s "${OUTPUT}/model_eval/sciimpact_model_credibility_scorecard.md"
 
 accuracy="$(
   PYTHONPATH=src "${PYTHON_BIN}" - <<'PY' "${OUTPUT}/model_eval/sciimpact_model_eval.json"

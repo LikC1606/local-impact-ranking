@@ -1,5 +1,476 @@
 # Progress Log
 
+## 2026-05-31
+
+- Added a report-facing model credibility card to the user workflow.
+  - New module: `model_credibility_profile.py`.
+  - `scripts/run_user_impact.sh` now turns `configs/model_credibility/local-impact-judge-source-task-dpo.json` into `model_credibility_card.json/md` next to `impact_scores.csv`.
+  - The card exposes pooled SciImpact accuracy, min seed accuracy, weak slices, reportability with disclosure, and the standalone-model claim boundary.
+  - `report_decision` is now gated by model credibility: missing/low/not-credible model evidence downgrades reportable model-supported outputs to `exploratory_only`; the current recommended model remains reportable only with disclosure because it is `moderate_credibility`.
+  - `report_bundle` now copies `model_credibility_card.json/md`, summarizes model credibility in the bundle README, and records `bundle_decision` so model-score handoffs use their own impact claim certificate instead of being mislabeled by full-pipeline readiness.
+  - Verification passed: focused model-credibility/report-bundle/scripts/docs tests `28 passed`; user-entry replay passed at `/tmp/local-impact-user-impact-cred-card`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-cred-card`; publish readiness passed with `469 passed`, `Publish readiness checks passed`.
+- Hardened model credibility against profile reuse.
+  - `model_credibility_card` now accepts the actual served `MODEL` and compares it with profile model names.
+  - A mismatch produces `model_credibility_status=mismatched_profile`, `model_identity_match=false`, and forces `report_decision=exploratory_only`.
+  - Verified the negative path with a no-GPU replay using `MODEL=unverified-local-impact-judge`; the run correctly downgraded to exploratory at `/tmp/local-impact-user-impact-model-mismatch`.
+  - Verified the matched path at `/tmp/local-impact-user-impact-model-match` with `model_identity_match=True` and `report_decision=report_with_disclosure`.
+  - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-model-identity`; publish readiness passed with `470 passed`, `Publish readiness checks passed`.
+- Added a confidence-calibration credibility card.
+  - New module: `calibration_profile.py`.
+  - `scripts/run_user_impact.sh` now writes `calibration_profile_card.json/md` next to the model-score outputs and copies it into `report_bundle`.
+  - The card checks calibration sample size, ECE/MCE/Brier thresholds, compatible model names, and `calibration_model_identity_match`.
+  - `configs/calibration/sciimpact-qwen32b-heldout-p50.json` now declares `compatible_models`, including the current `local-impact-judge-source-task-dpo` served model.
+  - A missing, weak, or mismatched calibration profile downgrades `report_decision` to `exploratory_only`, because calibrated confidence affects report-facing confidence.
+  - Verified default replay at `/tmp/local-impact-user-impact-calibration-card`: `calibration_status=calibration_supported`, `calibration_model_identity_match=True`, `report_decision=report_with_disclosure`.
+  - Verified mismatch replay at `/tmp/local-impact-user-impact-calibration-mismatch`: `calibration_status=mismatched_profile`, `calibration_model_identity_match=False`, `report_decision=exploratory_only`.
+  - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-calibration-card`; publish readiness passed with `473 passed`, `Publish readiness checks passed`.
+- Added and validated a direct SciImpact model-answer credibility scorecard.
+  - `evaluate-sciimpact-predictions` now writes `sciimpact_model_credibility_scorecard.json/md` alongside `sciimpact_model_eval.json/md`.
+  - The scorecard gates model-answer claims on coverage, one-sided binomial significance against random A/B selection, overall SciImpact accuracy, and dimension/item-type slice stability.
+  - Re-ran the three existing source-task DPO p50 prediction sets without starting a GPU model service:
+    - seed23: accuracy `0.680`, coverage `1.000`, scorecard `moderate_credibility`; weakest slice `dataset=0.520`.
+    - seed47: accuracy `0.647`, coverage `1.000`, scorecard `moderate_credibility`; weak slices include `downloads=0.560`, `stars=0.520`, `github_repo=0.520`, and `model=0.548`.
+    - seed71: accuracy `0.650`, coverage `1.000`, scorecard `moderate_credibility`; weak slices include `patent=0.560`, `stars=0.580`, `github_repo=0.580`, and `model=0.586`.
+  - Conclusion: the local source-task DPO judge is clearly above random and reportable as benchmark-supported, but it should not be described as a high-credibility standalone impact oracle. The final impact system must continue to rely on evidence-first scoring, external-evidence readiness, validity labels/backtests, and scorecard-gated reports.
+  - Verification passed: focused SciImpact model/docs/scripts tests `67 passed`; full tests `455 passed`; publish readiness `455 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-model-scorecard-final` with `model_smoke=skipped`.
+- Added a cross-seed SciImpact model credibility summary.
+  - New command: `summarize-sciimpact-model-credibility`.
+  - Inputs are repeated `--eval` directories or `sciimpact_model_eval.json` files.
+  - Outputs are `sciimpact_model_credibility_summary.json/md`.
+  - The summary pools direct accuracy, reports mean/min seed accuracy and seed stability, lists weak dimension/item-type slices, and emits a single model-credibility decision.
+  - Real three-seed source-task DPO summary written to `runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-three-seed-model-credibility`.
+  - Result: `900/900` covered, pooled accuracy `0.658889`, mean accuracy `0.658889`, min seed accuracy `0.646667`, status `moderate_credibility`.
+  - Weak slices: `item_type:dataset` pooled `0.569`, `dimension:stars` `0.580`, `item_type:github_repo` `0.580`, `item_type:model` min-seed `0.548`, plus weaker `downloads` and `patent` seeds.
+  - Interpretation: the model has stable above-random signal, but cross-seed evidence still blocks a high-credibility standalone model claim.
+  - Verification passed: focused SciImpact model/docs/scripts tests `69 passed`; full tests `457 passed`; publish readiness `457 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-cross-seed-summary` with `model_smoke=skipped`.
+- Added a weak-slice SciImpact model error pack.
+  - New command: `export-sciimpact-model-weak-slice-errors`.
+  - Inputs are repeated `--eval` directories or `sciimpact_model_eval.json` files.
+  - Outputs are `sciimpact_model_weak_slice_error_pack.json/md` plus `sciimpact_model_weak_slice_errors.jsonl`.
+  - The pack collects wrong/uncovered examples only when their dimension or item type is in a weak slice under the configured threshold.
+  - Default use is `diagnostic_only`, with a leakage warning that held-out/test errors must not be reused for training; `--training-source` is required for train-split prediction packs.
+  - Real three-seed source-task DPO pack written to `runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-three-seed-weak-slice-errors`.
+  - Result: `178` weak-slice errors, `13` high-confidence errors. Error buckets: `dimension:stars=63`, `item_type:github_repo=63`, `dimension:downloads=59`, `dimension:patent=56`, `item_type:model=31`, `item_type:dataset=28`.
+  - Verification passed: focused SciImpact model/docs/scripts tests `71 passed`; full tests `459 passed`; publish readiness `459 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-weak-slice-errors` with `model_smoke=skipped`.
+- Extended the weak-slice pack into trainable SFT/DPO export.
+  - `export-sciimpact-model-weak-slice-errors` now accepts aligned `--sft` paths.
+  - With `--sft`, it exports `train_pairwise_sft.jsonl`, `train_pairwise_dpo.jsonl`, and `weak_slice_source_records.jsonl` in addition to the diagnostic error files.
+  - Generated a train-split candidate pack at `runs/sciimpact-hard-example-train-p100-dpo64/weak_slice_training_candidates`.
+  - Result: `139` weak-slice training candidates, `45` high-confidence errors, and weak buckets `downloads=49`, `media=46`, `stars/github_repo=44`, `model=26`, `dataset=23`.
+  - SFT validation passed: `raw=139 loaded=139 invalid=0`.
+  - DPO validation passed: `raw=139 loaded=139 invalid=0 duplicates=0 reverse_conflicts=0`.
+  - Verification passed: focused SciImpact model/docs/scripts tests `71 passed`; full tests `459 passed`; publish readiness `459 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-training-candidates` with `model_smoke=skipped`.
+- Added a conservative weak-slice DPO continuation script.
+  - New script: `scripts/train_sciimpact_weak_slice_dpo.sh`.
+  - It validates the weak-slice DPO candidate data before training.
+  - Defaults are intentionally small: `MAX_EXAMPLES=139`, `MAX_STEPS=32`, `MAX_LENGTH=4096`, `LEARNING_RATE=5e-7`, `BETA=0.1`.
+  - Default base adapter is the current source-task DPO adapter `qwen32b-source-task-sft16k4096-dpo16k1024-128step`.
+  - This pass did not start GPU training; verification covered `bash -n` and DPO data validation.
+  - Verification passed: focused scripts/docs/model tests `72 passed`; full tests `460 passed`; publish readiness `460 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-weak-slice-dpo-script` with `model_smoke=skipped`.
+- Ran the weak-slice DPO continuation experiment and rejected the candidate.
+  - Training adapter: `runs/sciimpact-weak-slice-candidate/checkpoints/qwen32b-source-task-dpo-weak-slice-32step`.
+  - Training used GPUs `0,1,2,3`, `MAX_STEPS=32`, `MAX_LENGTH=4096`, `LEARNING_RATE=5e-7`, and the `139` weak-slice DPO candidates.
+  - Training reached step `32` with finite losses; final logged loss `0.693359`.
+  - The same non-blocking bitsandbytes `GLIBC_2.34` warning appeared during startup.
+  - Candidate was served on GPU `6` at port `8020` as `local-impact-judge-weak-slice-dpo`, evaluated on held-out p50 seeds, then stopped.
+  - Candidate direct accuracies: seed23 `0.667`, seed47 `0.657`, seed71 `0.627`.
+  - Candidate three-seed summary: pooled accuracy `0.650`, mean accuracy `0.650`, min seed accuracy `0.626667`, status `moderate_credibility`.
+  - Baseline source-task DPO summary remains better: pooled accuracy `0.658889`, mean accuracy `0.658889`, min seed accuracy `0.646667`.
+  - Decision: do not promote the weak-slice DPO adapter. Keep it as a negative diagnostic result.
+  - Verification passed: docs/scripts tests `41 passed`; full tests `460 passed`; publish readiness `460 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-weak-slice-dpo-experiment` with `model_smoke=skipped`.
+
+## 2026-05-29
+
+## 2026-05-30
+
+- Added a SciImpact-style pairwise benchmark credibility scorecard.
+  - `evaluate-pairwise-impact` now writes `pairwise_credibility_scorecard.json/md` alongside `pairwise_evaluation.json/md`.
+  - The scorecard gates pairwise benchmark credibility on coverage, one-sided binomial significance against a random 0.5 non-tie baseline, benchmark accuracy, tie rate, and dimension/field slice stability.
+  - `scripts/run_sciimpact_smoke.sh`, `scripts/run_sciimpact_sft_baseline.sh`, `scripts/run_deliverable_check.sh`, README, evaluation docs, docs tests, and publish readiness now require/document the scorecard.
+  - Re-ran the existing full downloaded SciImpact text-prior baseline: `pairwise_accuracy=0.494`, `coverage_rate=1.000`, scorecard `not_credible`. It passes coverage and statistical significance on non-tie accuracy (`0.5065`) because the sample is large, but fails benchmark accuracy and slice stability, which is the desired public-claim gate.
+  - Verification passed: related pairwise/SciImpact/scripts/docs tests `47 passed`; full tests `453 passed`; publish readiness `453 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-pairwise-scorecard`.
+- Added a report-facing impact validity credibility scorecard.
+  - `evaluate-impact-validity` and `backtest-impact-validity` now write `impact_credibility_scorecard.json/md` alongside `impact_validity_evaluation.json/md`.
+  - The scorecard gates validation credibility on coverage, statistical support versus a random-label baseline, rank alignment, top-rank quality, field-slice stability, and outlier robustness.
+  - Added robustness checks that re-evaluate metrics after dropping the top label row, top score row, and top 5% label rows, so outlier-driven top-k evidence is disclosed.
+  - Integrated the scorecard into report bundles, artifact indexing, project readiness, impact claim certificates, README, evaluation docs, scoring docs, and publish readiness checks.
+  - Focused verification passed: `34 passed` across impact validity, backtest, report bundle, artifacts, and docs tests.
+  - Wider verification passed: `74 passed` across validity, backtest, report bundle, artifacts, project readiness, claim certificate, docs, and scripts tests.
+  - Full verification passed: `451 passed`.
+  - Publish readiness passed: `451 passed`, `Publish readiness checks passed`.
+  - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-credibility-scorecard`; model smoke was skipped.
+- Added a report-facing impact claim certificate.
+  - New `impact-claim-certificate` command writes `impact_claim_certificate.json/md` for either a model-score directory or a full pipeline run.
+  - `model-score-dataset` now writes the certificate automatically next to `impact_scores.csv`.
+  - `report-bundle` now refreshes and copies the certificate, and the bundle README exposes `impact_claim_status`, `validated_impact_accuracy`, and `high_credibility_claim`.
+  - The certificate explicitly separates `validated`, `evidence_supported`, `exploratory`, and `blocked` states, so a high numeric score cannot be reported as validated impact accuracy unless future-window or external labels support it.
+- Hardened the model-score deliverable bundle.
+  - `report-bundle` now supports `model-score-dataset` output directories directly.
+  - The bundle copies `impact_scores.csv/jsonl`, `model_impact_report.json/md`, `impact_score_cards.json/md`, `pairwise_judgments.jsonl`, external evidence readiness files, optional validity reports, and the claim certificate.
+  - The bundle README now includes a `Model Score Dataset` summary with paper count, judgment count, parseable rate, scoring method, ranking-quality status, and validated-impact claim status.
+  - Verification passed: focused report-bundle/scripts/docs tests `43 passed`; full tests `443 passed`; publish readiness `443 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-model-bundle` with `model_smoke=skipped`.
+- Added one-command model-score bundling.
+  - `model-score-dataset` now accepts `--report-bundle` and optional `--report-bundle-output`.
+  - When enabled, scoring writes the normal model outputs and then creates a shareable report bundle at `<output>/report_bundle` by default.
+  - Updated `scripts/run_deliverable_check.sh` and README to use the one-command path.
+  - Verification passed: focused CLI/scripts/docs tests `41 passed`; full tests `443 passed`; publish readiness `443 passed`, `Publish readiness checks passed`.
+- Added offline replay for model pairwise judgments.
+  - `model-score-dataset` now accepts `--pairwise-judgments PATH`.
+  - Replay mode loads an existing `pairwise_judgments.jsonl` file, skips pairwise model calls, and recomputes fused scores, score cards, external-evidence readiness, claim certificate, validity report, and optional report bundle.
+  - The model report records `pairwise_judgment_source.type=file`, the source path, and the loaded judgment count for audit.
+  - Verification passed: focused replay/docs tests `20 passed`; wider model/docs/scripts/bundle regression `79 passed`; full tests `444 passed`; publish readiness `444 passed`, `Publish readiness checks passed`.
+- Added pairwise judgment resume mode for interrupted long runs.
+  - `model-score-dataset` now accepts `--resume-pairwise-judgments PATH`.
+  - Resume mode loads existing judgments, filters the planned pairwise comparison set by completed pair keys, calls the model only for missing pairs, and writes a merged `pairwise_judgments.jsonl`.
+  - The model report records `pairwise_judgment_source.type=resume`, `existing_count`, `generated_count`, and total count.
+  - Verification passed: focused resume/docs/scripts tests `42 passed`; wider model/docs/scripts/bundle regression `81 passed`; full tests `446 passed`; publish readiness `446 passed`, `Publish readiness checks passed`; no-GPU deliverable check passed at `/tmp/local-impact-deliverable-resume` with `model_smoke=skipped`.
+- Added pairwise judgment journaling for interruption-safe long runs.
+  - `model-score-dataset` now accepts `--pairwise-journal PATH`.
+  - Each newly generated pairwise judgment is written to the journal immediately after completion, before the full run finishes.
+  - When `--pairwise-journal` uses the same path as `--resume-pairwise-judgments`, missing judgments are appended instead of truncating the checkpoint file.
+  - The model report records `pairwise_journal` with path and append mode.
+  - Verification passed: focused journal/resume/docs tests `21 passed`; wider model/docs/scripts/bundle regression `82 passed`; full tests `447 passed`; publish readiness `447 passed`, `Publish readiness checks passed`.
+- Added model-score preflight sizing.
+  - New `model-score-preflight` command writes `model_score_preflight.json/md` without calling the model.
+  - It reports paper count, total possible pairs, planned pairs, resume-completed pairs, missing pairs, bidirectional/direct model request estimates, and external-evidence readiness summary.
+  - This gives a safe way to size a run and adjust pair budget before GPU inference.
+  - Verification passed: focused preflight/docs/scripts tests `43 passed`; wider model/docs/scripts/bundle regression `85 passed`; full tests `450 passed`; publish readiness `450 passed`, `Publish readiness checks passed`.
+- Closed the final delivery-gate gap after the v3 credibility work.
+  - `scripts/run_deliverable_check.sh` now verifies the optional model-scoring branch emits `validated_impact_claim.status` in `model_impact_report.md` and `validity_confidence` in `impact_scores.csv`.
+  - `calibrate-fusion-weights` CLI output now includes `profile=...`, making `impact_index_v3_final_components` visible in terminal logs.
+  - Verification passed:
+    - Focused calibration/model/docs/scripts regression: `83 passed`.
+    - Full test suite: `438 passed`.
+    - Publish readiness: `438 passed`, `Publish readiness checks passed`.
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-final-closure`; `model_smoke=skipped`.
+- Adopted the latest credibility-analysis recommendations into the codebase.
+  - `calibrate-fusion-weights` now outputs `impact_index_v3_final_components`, calibrating the final score across model pairwise, field/year citation, RCR-like citation ratio, citation graph, citation context, influential citation, temporal momentum, and external adoption signals.
+  - `model-score-dataset --fusion-weights` now loads v3 final-component calibration files, converts them into `impact_index_v3_weights` plus `evidence_first_weights`, and still accepts legacy v2 `best_weights` calibration profiles.
+  - Added run-level `validated_impact_claim` and per-paper `validity_status` / `validity_confidence`. If no future-window or external validity labels are supplied, the system explicitly marks the score as `unvalidated` and caps validity confidence, preventing a model-only or evidence-only score from being reported as validated impact accuracy.
+  - Updated README, `docs/scoring-method.md`, tests, and `scripts/check_publish_ready.sh` so these credibility controls are part of release readiness.
+  - Verification passed:
+    - Focused v3 calibration/model/docs/scripts regression: `95 passed`.
+    - Full test suite: `437 passed`.
+    - Publish readiness: `437 passed`, `Publish readiness checks passed`.
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-v3-calibrated-validity`; `model_smoke=skipped`.
+- Completed the final external-evidence credibility integration pass without starting GPU jobs or uploading to GitHub.
+  - Added and documented `import-external-evidence` for user-supplied OpenAlex/BIP!/Semantic Scholar/patent/policy/media/award/artifact evidence, matched by `paper_id`, DOI, OpenAlex ID, or S2/Semantic Scholar ID.
+  - Integrated Semantic Scholar-compatible `influential_citation_score` and BIP-compatible `bip_impact_score` into the evidence-first scoring surface, readiness coverage, taxonomy, model score cards, README, scoring docs, input schema, and publish checks.
+  - Added `model-score-dataset --validity-labels --validity-label-column` so future-window or external labels can produce `impact_validity/impact_validity_evaluation.json/md` directly in the model-scoring run.
+  - Updated the README evidence-first formula to the implemented weights: `0.18 field/year`, `0.14 RCR`, `0.14 graph`, `0.14 context`, `0.10 influential citation`, `0.10 momentum`, and `0.20 external adoption`.
+  - Verification passed:
+    - Focused external-evidence/model/docs/scripts regression: `93 passed`.
+    - Full test suite: `434 passed`.
+    - Publish readiness: `434 passed`, `Publish readiness checks passed`.
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-final-evidence`; `model_smoke=skipped`.
+- Continued final credibility hardening without starting GPU jobs:
+  - Replaced max-value component scaling with tied-rank percentile scaling for fused impact components. This keeps the 0-100 component interface but reduces extreme maximum-value compression; tied top evidence still receives 100.
+  - Added a regression test showing a strong non-outlier citation paper no longer collapses under an extreme citation outlier.
+  - Changed the default model pairwise aggregation in `model-score-dataset` from order-sensitive Elo to confidence-weighted Rank Centrality. `impact_index` / `model_supported_score` now use an order-independent pairwise score by default, while `elo_rating` remains in outputs for audit and legacy comparison.
+  - Added `--pairwise-aggregation rank_centrality|elo` to keep legacy comparison possible.
+  - Updated README, scoring docs, planning docs, CSV outputs, report text, and publish checks.
+  - Focused verification passed: `62 passed` across model impact index, impact fusion, docs, and publish-script coverage tests.
+  - Final verification passed:
+    - Full test suite: `429 passed`.
+    - Publish readiness: `429 passed`, `Publish readiness checks passed`.
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-final-hardening`; `model_smoke=skipped`.
+- Implemented the responsible-metrics credibility upgrade requested after the literature review:
+  - Added `relative_citation_ratio_score`, an RCR-like local component based on annual citation rate divided by supplied expected citation rate, with conservative local field/year fallback.
+  - Added `citation_outlier_flag`, `citation_outlier_ratio`, and `citation_outlier_basis` to expose extreme citation-count anomalies.
+  - Added media and award external evidence (`media_impact_score`, `award_impact_score`) alongside patent, policy, and artifact adoption signals.
+  - Added `impact_taxonomy.py` and model-report `Impact Dimension Coverage` for SciImpact-style dimensions: citation, patent, policy, media, award, downloads, and stars.
+  - Added self-citation risk disclosure to `anomaly_report` and readiness warning `self_citation_risk_not_high`.
+  - Added `impact_score_cards.json/md` for `model-score-dataset` so the model-backed path exports per-paper component evidence cards.
+  - Updated README, scoring docs, input schema, and publish readiness checks.
+- Focused responsible-metrics verification passed: `21 passed`.
+- Wider responsible-metrics regression passed: `81 passed`.
+- Full verification passed: `427 passed`.
+- Publish readiness passed: `427 passed`, `Publish readiness checks passed`.
+- No-GPU deliverable check passed at `/tmp/local-impact-deliverable-responsible-metrics`; model smoke was skipped, quickstart/SciImpact/backtest paths completed.
+
+## 2026-05-29
+
+- Completed the clean 16k-token context experiment and recorded it as a diagnostic/negative result.
+  - SFT adapter: `runs/sciimpact-long-context/checkpoints/qwen32b-sft16k-16k-256step`.
+  - DPO adapter: `runs/sciimpact-long-context/checkpoints/qwen32b-sft16k-16k-dpo16k-256step`.
+  - Training config: `max_length=16384`, `max_examples=16000`, `max_steps=256`, Qwen32B base, GPUs `0,1,2,3`.
+  - Clean 16k SFT, SciImpact p50 seeds `23/47/71`: mean direct accuracy `0.634444`; mean bidirectional selected accuracy at margin `0.05`: `0.643333`; mean consistency `0.673333`.
+  - Clean 16k SFT+DPO, SciImpact p50 seeds `23/47/71`: mean direct accuracy `0.621111`; mean bidirectional selected accuracy at margin `0.05`: `0.653333`; mean consistency `0.613333`.
+  - Decision: do not promote the clean 16k-token adapters. They remove truncation but do not beat the current recommended adapter `runs/sciimpact-large-sft-dpo/checkpoints/qwen32b-sft16k512-dpo-random16k-256step`, whose three-seed mean bidirectional selected accuracy is `0.662`.
+  - Implication: GPU memory is not the active blocker. The next model-quality work should focus on data/objective/teacher strategy and evidence extraction rather than simply increasing context length.
+- Added a stricter candidate promotion gate to `credibility-report`.
+  - New gate parameters: `--min-seed-count`, `--allowed-seed-selected-regression`, and `--allowed-slice-regression`.
+  - The loader now prefers margin `0.05` flip-consistency reports over margin `0.00` when both exist.
+  - Clean 16k-token SFT+DPO diagnostic report: `runs/impact-system-credibility-clean16k-token-diagnostic/credibility_report.md`.
+  - Gate result: `keep_baseline_or_collect_more_evidence`; mean selected delta `-0.009`, mean direct delta `-0.013`, worst seed selected delta `-0.017`, and worst slice delta `-0.060`.
+  - Decision: the current recommended adapter remains `runs/sciimpact-large-sft-dpo/checkpoints/qwen32b-sft16k512-dpo-random16k-256step`; future adapters must clear the same three-seed quality gate before replacement.
+- Confirmed the larger SFT16k+DPO16k adapter on a third held-out SciImpact p50 seed and turned the evidence into a reportable credibility artifact.
+  - New third-seed sample: `runs/sciimpact-qwen32b-thirdseed-p50-seed71/sample/sciimpact_sft_stratified.jsonl` (`300` examples, `50` per dimension).
+  - Baseline DPO64 seed71: direct `185/300 = 0.616667`; bidirectional flip-consistency margin `0.05`: `196/300 = 0.653333`.
+  - Candidate SFT16k+DPO16k seed71: direct `187/300 = 0.623333`; bidirectional flip-consistency margin `0.05`: `198/300 = 0.660000`.
+  - Three-seed credibility report: `runs/impact-system-credibility-qwen32b-sft16k-dpo16k/credibility_report.md`.
+  - Three-seed aggregate: mean direct accuracy `0.630 -> 0.634` (`+0.004`), mean bidirectional selected accuracy `0.656 -> 0.662` (`+0.007`), mean consistency rate `0.646 -> 0.631` (`-0.014`).
+  - Decision: promote `runs/sciimpact-large-sft-dpo/checkpoints/qwen32b-sft16k512-dpo-random16k-256step` as the recommended local judge adapter for bidirectional scoring, while disclosing that the gain is modest and slice regressions remain (`model`, `downloads`, `citation`, `dataset`, `media`).
+  - Added `credibility-report` CLI and `src/local_impact_ranking/credibility_report.py` to produce JSON/Markdown model-quality evidence bundles from multiple SciImpact runs.
+  - Added `scripts/serve_recommended_impact_judge.sh` to serve `local-impact-judge-sft16k-dpo16k` with the recommended LoRA adapter.
+  - Updated `README.md` and `docs/planning/qwen32b-sciimpact-evaluation.md` with the three-seed evidence, recommended adapter, deployment command, and claim boundary.
+  - Targeted verification passed for the new report, docs, and script coverage: `23 passed`.
+- Adopted the full ImpactIndex v2 scoring design into the deliverable local model path.
+  - New module: `src/local_impact_ranking/impact_fusion.py`.
+  - `model-score-dataset` now produces final per-paper `impact_index_v2` scores by fusing:
+    - local Qwen pairwise Elo score;
+    - field/year-normalized citation signal;
+    - local citation-graph PageRank;
+    - citation-context quality;
+    - temporal citation momentum.
+  - Default weights: `0.30 model_pairwise`, `0.25 field_year_normalized_citation`, `0.20 citation_graph`, `0.15 citation_context_quality`, `0.10 temporal_momentum`.
+  - Missing signal weights are redistributed per paper and reported through `fusion_weight_*`, `fusion_signal_count`, `fusion_available_weight`, and `evidence_quality_flag`.
+  - The original model-only pairwise Elo score remains as `impact_index` for audit and SciImpact-style pairwise benchmark comparison.
+  - `impact_scores.csv/jsonl` now include component scores, raw component values, final fused score, and evidence-quality fields.
+  - `model_impact_report.json/md` now summarize the fusion version, claim scope, signal coverage, and top-paper component scores.
+- Updated `README.md` and `docs/scoring-method.md` to document `impact_index_v2`, its weights, missing-signal policy, and dataset-local claim boundary.
+- Added TDD coverage:
+  - `tests/test_impact_fusion.py` covers multi-signal fusion, missing-signal redistribution, and citation-only fallback.
+  - `tests/test_model_impact_index.py` covers `model-score-dataset` output fields and report integration.
+  - `tests/test_docs.py` covers public documentation of the final score.
+- Verification:
+  - Targeted tests passed: `43 passed`.
+  - Full test suite passed before this log update: `331 passed`.
+  - Publish readiness passed before this log update: `331 passed`, `Publish readiness checks passed.`
+  - Offline smoke produced a complete run at `/tmp/local-impact-v2-smoke-0tiix9u1` with `SCORING_METHOD=impact_index_v2_fusion`.
+- Added an ImpactIndex v2 quality layer to improve score credibility.
+  - Citation normalization now uses `log1p(citation_count)` inside field/year buckets to reduce extreme outlier dominance.
+  - Each paper now receives a leave-one-signal-out sensitivity interval: `score_ci_low`, `score_ci_high`, `score_ci_width`, and `score_interval_method`.
+  - Each paper records `dominant_signal` and `max_signal_contribution_share` to expose scores driven by a single component.
+  - Each paper now has `uncertainty_band` and `reportability_status` (`reportable`, `exploratory`, or `low_confidence`) with reasons.
+  - `model_impact_report.md`, `impact_scores.csv/jsonl`, `README.md`, and `docs/scoring-method.md` now document and expose these fields.
+  - Targeted verification passed after this change: `82 passed` across impact fusion, model impact index, docs, and CLI tests.
+- Added benchmark-calibrated fusion-weight support.
+  - New command: `calibrate-fusion-weights`, which grid-searches ImpactIndex v2 signal weights against pairwise impact labels and writes `fusion_calibration.json/md`.
+  - `model-score-dataset` now accepts `--fusion-weights` and records `fusion.weight_source` in `model_impact_report.json/md`.
+  - The calibration loader now rejects legacy `impact_scores.csv` files that lack v2 component score columns, preventing misleading all-zero component calibration.
+  - Checked existing SciImpact index-eval artifacts and confirmed they are legacy model-only CSVs; they must be regenerated through `model-score-dataset` before fusion-weight calibration.
+  - Added prompt text budgeting for local model pairwise/direct scoring. Long SciImpact dataset cards and GitHub README records are now truncated in title, venue/field, and abstract fields before model calls, preventing vLLM 400 errors from overlong prompts.
+  - Ran a real SciImpact p20 v2 calibration smoke:
+    - Converted sample: `runs/sciimpact-v2-fusion-calibration-smoke-p20/converted`
+    - v2 score run: `runs/sciimpact-v2-fusion-calibration-smoke-p20/v2-impact`
+    - calibration report: `runs/sciimpact-v2-fusion-calibration-smoke-p20/fusion-calibration`
+    - papers `240`, judgments `120`, parseable rate `1.000`, ranking quality `limited`
+    - pairwise benchmark accuracy `70/120 = 0.583333`
+    - calibration status `single_signal_diagnostic` because only `model_pairwise` had non-zero coverage; default and best accuracy were equal, so this validates the pipeline but not multi-signal fusion.
+  - `fusion_calibration.json/md` now includes best-weight diagnostics by impact dimension, weakest dimensions, and wrong examples.
+  - SciImpact p20 diagnostic accuracy by dimension: stars `0.85`, media `0.65`, award `0.60`, citation `0.60`, downloads `0.45`, patent `0.35`. The next model-quality work should target patent/downloads examples before retuning global fusion weights.
+- Added weak-dimension sampling for SciImpact model improvement.
+  - `sample-sciimpact-sft` now supports repeated `--dimension-weight DIMENSION=N` arguments while keeping the default balanced behavior unchanged.
+  - Generated a real weak-dimension training bundle at `runs/sciimpact-weak-dimension-sample`.
+  - Sample plan: base `200` examples per dimension, with `patent=3` and `downloads=3`, yielding `2000` total examples: patent `600`, downloads `600`, and award/citation/media/stars `200` each.
+  - Exported `train_pairwise_sft.jsonl` (`2000` records), `train_pairwise_dpo.jsonl` (`2000` records), validated SFT data (`loaded=2000`, `invalid=0`), and wrote LLaMA-Factory config at `runs/sciimpact-weak-dimension-sample/llamafactory/sciimpact_pairwise_sft_lora.yaml`.
+- Trained and evaluated a weak-dimension Qwen32B SFT adapter.
+  - Adapter: `runs/sciimpact-weak-dimension-sample/checkpoints/qwen32b-sft-weakdims-64step`
+  - Training: `2000` oversampled weak-dimension examples, `max_steps=64`, `max_length=1024`, `lora_r=8`, `lora_alpha=16`, seed `53`.
+  - Training completed and wrote adapter files despite a non-fatal local bitsandbytes GLIBC warning.
+  - Same SciImpact p50 benchmark direct/index result: `190/300 = 0.633333`, coverage `1.000`.
+  - By dimension: award `0.68`, citation `0.72`, downloads `0.64`, media `0.52`, patent `0.68`, stars `0.56`.
+  - Flip-consistency with margin `0.05` improved it to `197/300 = 0.656667`, but this remains below the current best DPO flip-consistency result `207/300 = 0.690000`.
+  - Complementarity check against current best DPO found only `3` DPO errors fixed and `13` DPO correct cases broken; oracle upper bound from choosing the correct result between the two models was only `210/300 = 0.700`.
+  - Decision: keep `weakdims64` as a diagnostic/negative result, not as the default model. Next route is DPO continuation from the current best DPO adapter on weak-dimension preference data, rather than promoting the SFT adapter or ensembling it.
+- Trained and evaluated a weak-dimension DPO continuation from the current best DPO adapter.
+  - Adapter: `runs/sciimpact-weak-dimension-sample/checkpoints/qwen32b-dpo-weakdims-from-dpo64-32step`
+  - Base adapter/reference: `runs/sciimpact-pairwise-dpo-pilot/checkpoints/qwen32b-sft1024-dpo-random4096-64step`
+  - Training data: `runs/sciimpact-weak-dimension-sample/train_pairwise_dpo.jsonl` (`2000` loaded preference examples)
+  - Training: `max_steps=32`, `max_length=1024`, `gradient_accumulation_steps=4`, `learning_rate=1e-6`, `lora_r=8`, `lora_alpha=16`, seed `61`.
+  - Final logged DPO loss: `0.6875`; adapter files and tokenizer were saved.
+  - Same SciImpact p50 raw direct/index result: `194/300 = 0.646667`, coverage `1.000`.
+  - Flip-consistency with margin `0.05`: `206/300 = 0.686667`, below the current best DPO margin `0.05` result `207/300 = 0.690000`.
+  - Margin sweep found best p50 result at margin `0.04`: `207/300 = 0.690000`, tying but not exceeding current best. Because this is a benchmark-tuned margin and not a held-out improvement, it should not be promoted.
+  - Dimension effects at margin `0.05`: citation `0.72` and patent `0.74`, but stars dropped to `0.60`; current best remains `DPO64 + flip-consistency margin 0.05`.
+  - GPU0 temporary adapter service was stopped after evaluation; GPU5 base `local-impact-judge` service remains on port `8000`.
+- Diagnosed the next model-improvement route after the low-score analysis.
+  - Current best raw DPO64 is strongest on `model` (`0.80`) and `paper` (`0.67`), but weak on `dataset` (`0.52`) and `github_repo` (`0.58`).
+  - Current best flip-consistency improves overall accuracy to `0.690`, but still leaves `dataset` at selected accuracy `0.56` and `github_repo` at `0.62`; `stars` remains the weakest dimension after flip-consistency at `0.62`.
+  - Decision: stop broad dimension-only oversampling as the next route; prepare item-type targeted data for `dataset`, `github_repo`, and `stars`.
+  - Implemented `sample-sciimpact-sft --item-type-weight ITEM=WEIGHT`, with metadata fallback for project-exported pairwise SFT records (`messages + target + impact_dimension + item_type`), so exported training files no longer sample as empty.
+  - Generated item-type targeted training bundle at `runs/sciimpact-itemtype-targeted-sample`:
+    - `train_pairwise_sft.jsonl`: `1400` records.
+    - `train_pairwise_dpo.jsonl`: `1400` records, `skipped=0`.
+    - Sampling config: `per_dimension=100`, `seed=71`, `dimension_weight stars=2`, `item_type_weight dataset=3`, `item_type_weight github=3`.
+    - Sample composition: `paper=400`, `dataset=300`, `github_repo=600`, `model=100`; dimensions: award `100`, citation `100`, downloads `400`, media `100`, patent `100`, stars `600`.
+  - Verification: red/green TDD confirmed the new sampling behavior; related tests passed with `71 passed`.
+- Trained and evaluated the item-type targeted DPO continuation from the current best DPO adapter.
+  - Adapter: `runs/sciimpact-itemtype-targeted-sample/checkpoints/qwen32b-dpo-itemtype-from-dpo64-32step`
+  - Base adapter/reference: `runs/sciimpact-pairwise-dpo-pilot/checkpoints/qwen32b-sft1024-dpo-random4096-64step`
+  - Training data: `runs/sciimpact-itemtype-targeted-sample/train_pairwise_dpo.jsonl` (`1400` loaded preference examples)
+  - Training: `max_steps=32`, `max_length=1024`, `gradient_accumulation_steps=4`, `learning_rate=1e-6`, `lora_r=8`, `lora_alpha=16`, seed `73`.
+  - Final logged DPO loss: `0.693359`; adapter files and tokenizer were saved.
+  - Same SciImpact p50 `SEED=23` direct result: `193/300 = 0.643333`, coverage `1.000`.
+  - Same p50 `SEED=23` flip-consistency with margin `0.05`: `205/300 = 0.683333`, below the current best DPO64 margin `0.05` result `207/300 = 0.690000`.
+  - Item-type p50 selected accuracy matched the current best on targeted weak types: `dataset=0.56`, `github_repo=0.62`, `model=0.80`, but `paper` dropped from `0.71` to `0.70`.
+  - Held-out p50 `SEED=47` direct result: `183/300 = 0.610000`; flip-consistency margin `0.05`: `184/300 = 0.613333`.
+  - Margin sweep diagnostic did not change the decision: seed23 best was `206/300 = 0.686667`, seed47 best was `192/300 = 0.640000` at a seed-specific margin.
+  - Decision: keep this as a negative/diagnostic result. It does not improve `dataset/github_repo/stars` beyond current DPO64 and should not be promoted as the default model.
+- Added hard-example mining for the next model-improvement route.
+  - New command: `mine-sciimpact-hard-examples`.
+  - Input: SciImpact SFT records plus `sciimpact_flip_consistency_rows.jsonl`.
+  - Output: `train_pairwise_sft.jsonl`, `train_pairwise_dpo.jsonl`, and `sciimpact_hard_pairwise_manifest.json`.
+  - Selection reasons: `selected_wrong` and `position_inconsistent`, with source-line deduplication and manifest counts by dimension/item type.
+  - The manifest reads nearby SciImpact sample manifests and emits a training leakage warning when the source ultimately comes from a test split.
+  - Generated a diagnostic-only current-best DPO64 p50 hard-example bundle at `runs/sciimpact-hard-example-diagnostic-dpo64-p50`: `161` examples, with `position_inconsistent=109` and `selected_wrong=93`.
+  - Diagnostic distribution: patent `35`, award `29`, stars `29`, citation `24`, downloads `22`, media `22`; item types: paper `110`, github_repo `29`, dataset `13`, model `9`.
+  - This p50 bundle is not a training source because it is derived from the SciImpact test split. The intended next training route is to run the same mining command on train/validation predictions.
+- Ran the first train-derived hard-example DPO experiment.
+  - Train sample: `runs/sciimpact-hard-example-train-p100-dpo64/sample/sciimpact_sft_stratified.jsonl`, sampled from SciImpact train split with `per_dimension=100`, seed `83` (`600` examples).
+  - Current-best DPO64 on this train sample: direct `363/600 = 0.605000`; flip-consistency margin `0.05`: `367/600 = 0.611667`.
+  - Mined train hard examples: `runs/sciimpact-hard-example-train-p100-dpo64/hard_examples`, `347` examples, no test leakage warning.
+  - Hard-example reasons: `selected_wrong=233`, `position_inconsistent=210`; by dimension: patent `77`, downloads `60`, media `57`, stars `56`, award `51`, citation `46`.
+  - Trained adapter: `runs/sciimpact-hard-example-train-p100-dpo64/checkpoints/qwen32b-dpo-hardmine-from-dpo64-32step`.
+  - Training: `max_steps=32`, `max_length=1024`, `gradient_accumulation_steps=4`, `learning_rate=1e-6`, `lora_r=8`, `lora_alpha=16`, seed `89`; final logged DPO loss around `0.69`.
+  - Test p50 `SEED=23`: direct `196/300 = 0.653333`, tying DPO64 direct; flip-consistency margin `0.05`: `205/300 = 0.683333`, below DPO64 `207/300 = 0.690000`.
+  - Held-out p50 `SEED=47`: direct `186/300 = 0.620000`, tying DPO64 direct; flip-consistency margin `0.05`: `187/300 = 0.623333`, tying DPO64 fixed-margin result.
+  - Margin sweep diagnostic did not exceed current best: seed23 best `206/300 = 0.686667`, seed47 best `191/300 = 0.636667`.
+  - Decision: hard-example mining is useful infrastructure, but this small p100/32-step continuation should not be promoted. It preserved direct accuracy but worsened or tied bidirectional selected accuracy.
+  - Verification: targeted CLI/docs/SciImpact pairwise tests passed with `60 passed`; full test suite passed with `350 passed`.
+- Ran a larger SFT+DPO training route after the small targeted runs failed to improve materially.
+  - SFT adapter: `runs/sciimpact-large-sft-dpo/checkpoints/qwen32b-sft-random16k-512step`
+  - SFT data: `runs/sciimpact-pairwise-sft-full/train_pairwise_sft.jsonl`, `max_examples=16000`, random seed `101`
+  - SFT training: `max_steps=512`, `max_length=1024`, `gradient_accumulation_steps=4`, `learning_rate=1e-5`, `lora_r=8`, `lora_alpha=16`; final logged loss stayed finite.
+  - DPO adapter: `runs/sciimpact-large-sft-dpo/checkpoints/qwen32b-sft16k512-dpo-random16k-256step`
+  - DPO data: `runs/sciimpact-pairwise-dpo-full/train_pairwise_dpo.jsonl`, `max_examples=16000`, random seed `103`
+  - DPO training: base/reference adapter is the new 16k SFT adapter; `max_steps=256`, `max_length=1024`, `gradient_accumulation_steps=4`, `learning_rate=1e-6`, `lora_r=8`, `lora_alpha=16`; final DPO loss stayed finite around `0.65-0.74`.
+  - Test p50 `SEED=23`: direct `199/300 = 0.663333` versus DPO64 `196/300 = 0.653333`; flip-consistency margin `0.05`: `208/300 = 0.693333` versus DPO64 `207/300 = 0.690000`.
+  - Held-out p50 `SEED=47`: direct `185/300 = 0.616667` versus DPO64 `186/300 = 0.620000`; flip-consistency margin `0.05`: `190/300 = 0.633333` versus DPO64 `187/300 = 0.623333`.
+  - Item-type effects at margin `0.05`: seed23 improves `github_repo` from `0.62` to `0.66` but drops `model` from `0.80` to `0.76`; seed47 improves `github_repo` from `0.48` to `0.54` and keeps paper/dataset/model unchanged.
+  - Dimension effects at margin `0.05`: seed23 improves award/stars, hurts citation/downloads/media; seed47 improves award/stars/media, hurts citation/patent.
+  - Margin sweep diagnostic: large model best seed23 `209/300 = 0.696667` at margin `0.03`; best seed47 `196/300 = 0.653333` at margin `0.13`. This is not a default recipe yet, but it shows the larger model has better bidirectional headroom.
+  - Decision: this is the first genuinely useful model-quality improvement. Treat `qwen32b-sft16k512-dpo-random16k-256step` as a candidate new best for bidirectional scoring, but do not make it the only default until one more held-out seed confirms the gain.
+  - Verification: related SciImpact/docs tests passed with `47 passed`; full test suite passed with `350 passed`.
+
+## 2026-05-28
+
+- Continued model-effect improvement without changing the original project goal: local Qwen-style model judging a paper dataset and producing per-paper impact scores.
+- Added A/B flip-consistency evaluation for SciImpact pairwise judging.
+  - New command: `flip-sciimpact-sft`, which swaps Paper A/B in ShareGPT SciImpact SFT records and flips the target answer.
+  - New command: `evaluate-sciimpact-flip-consistency`, which compares original predictions against flipped predictions mapped back to the original orientation.
+  - The report writes original accuracy, flipped-mapped accuracy, consistency rate, selected accuracy, by-dimension summaries, inconsistent rows, and a standard selected-predictions JSONL for existing evaluators.
+  - Selection policy: if original and flipped-mapped answers agree, use the agreed side; if they disagree, use the higher-confidence side only when it wins by `--confidence-margin`; otherwise keep the original side.
+- Ran the current best DPO adapter on the 300-example stratified SciImpact p50 sample:
+  - Adapter: `runs/sciimpact-pairwise-dpo-pilot/checkpoints/qwen32b-sft1024-dpo-random4096-64step`
+  - Original structured-choice direct/index accuracy: `196/300 = 0.653333`
+  - Flipped-mapped accuracy: `191/300 = 0.636667`
+  - Flip consistency with margin `0.00`: `203/300 = 0.676667`
+  - Flip consistency with margin `0.05`: `207/300 = 0.690000`
+  - Standard selected direct eval: `runs/sciimpact-qwen32b-sft1024-dpo64-flip-consistency-margin005-stratified-p50-c4/model_eval/selected_eval`
+  - Standard selected index eval: `runs/sciimpact-qwen32b-sft1024-dpo64-flip-consistency-margin005-stratified-p50-c4/model_eval/selected_index_eval`
+  - Interpretation: this is an inference-time robustness improvement, not a new training result. The `0.05` margin is selected on this sample and should be validated on another held-out seed before promotion as a default.
+- Rechecked bidirectional selection on a separate `SEED=47` stratified p50 sample:
+  - Original structured-choice accuracy: `0.620`
+  - Flipped-only mapped accuracy: `0.633`
+  - Flip consistency with margin `0.00`: `0.620`
+  - Flip consistency with margin `0.05`: `0.623`
+  - Best seed-specific sweep was about `0.637` at margin `0.21-0.22`
+  - Interpretation: fixed-margin bidirectional selection is sample-sensitive. Use bidirectional judging in production for robustness/confidence and non-decisive conflict handling, not as a universal benchmark-tuned answer override.
+- GPU state after the run: temporary GPU0 adapter service stopped; GPU5 base `local-impact-judge` service remains running on port `8000`.
+- Confirmed GPU state before continuing: GPU5 still hosts the existing `local-impact-judge` vLLM service on port `8000`; GPU4 was used temporarily and released afterward.
+- Added reproducible SFT sampling strategies to the local LoRA trainer. `train-sft` now supports `--sampling-strategy random|balanced_label|balanced_metadata`.
+- `balanced_metadata` samples by `impact_dimension + item_type + target_side`, addressing the SciImpact A/B and dimension imbalance seen in error analysis.
+- Added TDD coverage for metadata-balanced SFT sampling and CLI propagation.
+- Targeted verification passed: `30 passed` across SFT loading/training helpers, SciImpact SFT export, LLaMA-Factory export, SciImpact model/index eval, and relevant CLI tests.
+- Trained a new Qwen32B LoRA adapter with balanced metadata sampling:
+  - adapter: `runs/sciimpact-pairwise-sft-pilot/checkpoints/qwen32b-sft-balanced4096-128step`
+  - training examples sampled: `4096` from `87984` clean SciImpact pairwise SFT records
+  - `max_steps=128`, `max_length=1024`, `lora_r=8`, `lora_alpha=16`, seed `29`
+  - final logged loss: `0.143`
+- Evaluated the balanced adapter on the same SciImpact stratified p50 benchmark:
+  - direct accuracy: `0.623`
+  - index pairwise accuracy: `0.623`
+  - coverage: `1.000`
+  - run: `runs/sciimpact-qwen32b-sft-balanced128-constrained-answer3-stratified-p50-c4`
+- Current best remains the earlier random1024-64 LoRA adapter:
+  - adapter: `runs/sciimpact-pairwise-sft-pilot/checkpoints/qwen32b-sft-random1024-64step`
+  - direct/index pairwise accuracy: `0.637`
+  - coverage: `1.000`
+- Updated `docs/planning/qwen32b-sciimpact-evaluation.md` with the random64 result, balanced128 negative result, current-best recommendation, and next model-improvement targets.
+- Added optional model direct scoring to `model-score-dataset` through `--direct-score`.
+  - The command now writes `direct_scores.jsonl`, `direct_scores.csv`, and direct-score columns in `impact_scores.csv/jsonl`.
+  - Direct scoring uses vLLM `structured_outputs.choice` over calibrated bins: `Score: 0/20/40/60/80/100`.
+  - Pairwise dataset scoring now uses vLLM `structured_outputs.choice` for `Answer: A` / `Answer: B`, preventing reasoning-text parse failures in the production scoring path.
+  - Real local smoke on three SciCite records wrote all expected files at `/tmp/local-impact-direct-score-smoke-small`; parseable direct score count was `3/3`, parseable pairwise judgment count was `3/3`.
+  - Added `direct_score_quality` to the report. The same smoke showed direct scores were all `0.0`, so the report now marks direct score as `degenerate` and treats it as diagnostic only.
+- Verification for direct-score and structured pairwise scoring passed: `10 passed`.
+- Added pairwise confidence estimation to `model-score-dataset`.
+  - Pairwise calls now request vLLM/OpenAI-compatible `logprobs` for constrained `Answer: A/B` choices.
+  - `pairwise_judgments.jsonl` now includes `confidence`, `confidence_method`, and `choice_logprob_margin`.
+  - `impact_scores.csv/jsonl` now includes `coverage_confidence`, `mean_pairwise_confidence`, and combined `confidence`.
+  - Real local smoke on three SciCite records wrote `/tmp/local-impact-confidence-smoke-small`; all pairwise confidences used `choice_logprob_margin`, with judgment confidence values around `0.706-0.755`.
+  - Targeted verification passed: `13 passed` across model impact index, constrained SciImpact prediction, and SFT CLI propagation tests.
+- Extended SciImpact benchmark prediction/evaluation with the same logprob confidence signal.
+  - `generate-sciimpact-predictions --answer-format constrained-answer` now requests logprobs and writes `confidence`, `confidence_method`, and `choice_logprob_margin`.
+  - `evaluate-sciimpact-predictions` now reports `confidence_summary` and `by_confidence_bucket` accuracy.
+  - The evaluator now accepts both the original ShareGPT `conversations` format and the project-exported `messages + target` pairwise SFT format.
+  - Real local smoke on eight SciImpact pairwise SFT examples wrote `/tmp/sciimpact-confidence-smoke`: accuracy `0.750`, coverage `1.000`, scored examples `8/8`, mean confidence `0.655636`.
+  - Calibration observation from the tiny smoke: wrong examples had slightly higher mean confidence (`0.678570`) than correct examples (`0.647991`), so raw logprob confidence should be treated as diagnostic until calibrated on a larger held-out sample.
+  - Targeted verification passed: `27 passed` across SciImpact model eval, model impact index, and SFT CLI propagation tests.
+- Added SciImpact confidence calibration metrics.
+  - `sciimpact_model_eval.json/md` now includes a `calibration` section with expected calibration error, maximum calibration error, Brier score, overconfidence gap, and five-bin calibration details.
+  - Re-evaluated the eight-example smoke at `/tmp/sciimpact-confidence-smoke/eval-calibrated`: ECE `0.360095`, MCE `0.453307`, Brier score `0.228986`, overconfidence gap `-0.094364`.
+  - The tiny smoke confirms the metric wiring and shows raw confidence is not calibrated enough to use as a standalone quality gate.
+  - Targeted verification passed: `28 passed` across SciImpact model eval, model impact index, and SFT CLI propagation tests.
+- Ran a larger SciImpact p50 confidence calibration pass with the current local judge.
+  - Run: `runs/sciimpact-qwen32b-confidence-calibration-p50-c4`
+  - Input sample reused: `runs/sciimpact-qwen32b-sft64-constrained-answer3-stratified-p50-c4/sample/sciimpact_sft_stratified.jsonl`
+  - Examples: `300` (`50` each for award, citation, downloads, media, patent, stars)
+  - Prediction mode: `constrained_answer`, `concurrency=4`, `confidence_enabled=true`
+  - Results: accuracy `0.643333`, coverage `1.000`, scored examples `300/300`, mean confidence `0.750796`
+  - Calibration: ECE `0.107463`, MCE `0.156286`, Brier score `0.233059`, overconfidence gap `0.107463`
+  - Confidence buckets: high accuracy `0.756522` at mean confidence `0.912808`; medium accuracy `0.600000` at mean confidence `0.702178`; low accuracy `0.523077` at mean confidence `0.553916`
+  - Interpretation: confidence has useful ordering signal, but is overconfident and should be calibrated before being used as a hard quality gate.
+  - Targeted verification after the run passed: `28 passed`.
+- Added an empirical bin calibration layer for SciImpact prediction evaluation.
+  - `evaluate-sciimpact-predictions` now accepts `--calibration-report PATH`.
+  - The calibration layer maps raw confidence to the observed accuracy of the matching calibration bin and writes `calibrated_confidence` and `calibrated_confidence_method` per row.
+  - Reports now include `calibration_model` and `calibrated_confidence_summary` when an external calibration report is supplied.
+  - Same-sample wiring check wrote `runs/sciimpact-qwen32b-confidence-calibration-p50-c4/model_eval/eval-calibrated`; raw mean confidence `0.750796` maps to calibrated mean confidence `0.643333`, matching the same-sample accuracy `0.643333`.
+  - The same-sample check is only an implementation sanity check; use a held-out calibration split before treating calibrated confidence as a general trust score.
+  - Targeted verification passed: `29 passed`.
+- Added held-out SciImpact confidence calibration validation.
+  - New command: `split-sciimpact-calibration`, which stratifies by impact dimension and writes aligned `calibration_sft/predictions` and `validation_sft/predictions` files.
+  - New report metric: `calibrated_calibration`, which recomputes ECE, MCE, Brier score, and overconfidence gap using `calibrated_confidence`.
+  - Run: `runs/sciimpact-qwen32b-confidence-heldout-p50-c4`
+  - Split: 150 calibration / 150 validation examples, 25 per dimension in each split, seed `31`.
+  - Calibration split: accuracy `0.660`, raw ECE `0.086021`, raw Brier `0.221465`.
+  - Validation split raw: accuracy `0.626667`, raw ECE `0.128905`, raw Brier `0.244653`, raw mean confidence `0.755572`.
+  - Validation split calibrated using calibration split bins: calibrated ECE `0.039081`, calibrated Brier `0.225445`, calibrated mean confidence `0.665748`.
+  - Interpretation: empirical bin calibration improves held-out calibration substantially, so calibrated confidence is a better trust score than raw logprob confidence for reporting.
+  - Targeted verification passed: `30 passed`.
+- Connected held-out empirical confidence calibration to production dataset scoring.
+  - `model-score-dataset` now accepts `--calibration-report PATH`.
+  - `pairwise_judgments.jsonl` now includes `calibrated_confidence` and `calibrated_confidence_method` when a calibration report is supplied.
+  - `impact_scores.csv/jsonl` now includes `mean_calibrated_pairwise_confidence` and `confidence_source`.
+  - The final `confidence` field uses calibrated pairwise confidence when available, while `mean_pairwise_confidence` remains the raw logprob-derived diagnostic.
+  - Real local smoke with GPU5 `local-impact-judge` wrote `/tmp/local-impact-calibrated-confidence-smoke-small`; three pairwise judgments were parseable and used `confidence_source=calibrated_pairwise`.
+  - Targeted verification passed: `31 passed` across model impact index, SciImpact model eval, and relevant CLI tests.
+- Added production bidirectional pairwise scoring and coverage-first pair sampling for local impact indices.
+  - `model-score-dataset` now supports `--bidirectional-pairwise` and `--bidirectional-confidence-margin`.
+  - Each selected pair can be judged in both A/B and B/A orientation; outputs record `forward_prediction`, `reverse_prediction`, `reverse_mapped_winner_side`, `position_consistency`, `selected_source`, and `decisive`.
+  - Low-confidence unresolved A/B position conflicts are marked non-decisive so they do not pollute the Elo-derived `impact_index`.
+  - `model_impact_report.json/md` now summarizes `bidirectional_pairwise`, `decisive_judgment_count`, and `position_consistency_counts`.
+  - `model-score-dataset` now supports `--pair-sampling coverage`, which spreads small pair budgets across papers before filling in additional comparisons.
+  - Real local smoke with the DPO adapter wrote `/tmp/local-impact-bidirectional-coverage-smoke`: `6` judgments over `12` unique papers, `4` consistent and `2` conflict cases, all decisive after confidence-margin selection.
+  - Verification passed: `83 passed` across model impact index, SciImpact model eval, SciImpact index eval, and CLI tests.
+- Added ranking-quality reporting to prevent sparse local runs from being overclaimed.
+  - `model_impact_report.json/md` now includes `ranking_quality`.
+  - `impact_scores.csv/jsonl` now includes `ranking_quality_status` and `ranking_quality_reason`.
+  - Sparse pair budgets are marked `exploratory` with compared/uncompared paper counts, paper coverage rate, min/max/mean comparisons per paper, decisive judgment count, and recommended minimum judgments.
+  - Complete pairwise coverage is marked `reportable`.
+  - Real local smoke with GPU5 base model wrote `/tmp/local-impact-ranking-quality-smoke`: `4` judgments over `8/1000` papers, `ranking_quality.status=exploratory`, paper coverage rate `0.008`.
+  - Verification passed: `86 passed` across model impact index, SciImpact model eval, SciImpact index eval, and CLI tests.
+- Added automatic pair-budget planning for local dataset scoring.
+  - `model-score-dataset` now supports `--pair-budget manual|auto`.
+  - `--pair-budget auto --target-paper-coverage X` derives `effective_max_pairs` from dataset size, using coverage sampling to approximately cover the requested share of papers.
+  - The report records `pair_budget.mode`, `requested_max_pairs`, `effective_max_pairs`, `target_paper_coverage`, `paper_count`, and the budget reason.
+  - Defaults remain manual, so existing commands do not silently run more model calls.
+  - Real local smoke with GPU5 base model wrote `/tmp/local-impact-auto-budget-smoke`: target coverage `0.01` on `1000` papers selected `5` pairs and covered `10` papers.
+  - Verification passed: `89 passed` across model impact index, SciImpact model eval, SciImpact index eval, and CLI tests.
+
 ## 2026-05-27
 
 - Started a full optimization workflow per user request: analyze current weaknesses, research methods, design a complete plan, implement selected gaps, and verify the final project.
@@ -62,6 +533,29 @@
 - Verification for report bundle work: targeted tests passed with `21 passed`; local smoke passed at `/tmp/local-impact-ranking-report-bundle-smoke`; full verification passed with `200 passed`.
 - Added GitHub publish checks: `docs/publish-checklist.md` documents included/excluded paths and claim boundaries, and `scripts/check_publish_ready.sh` verifies required docs, GitHub Actions, ignore rules for `data/`, `models/`, `runs/`, no tracked local artifacts, README report-bundle references, and full tests.
 - Verification for publish readiness: targeted docs/scripts tests passed with `21 passed`; `scripts/check_publish_ready.sh` passed and reported `202 passed`.
+- Continued model-credibility optimization after the long-context run failed to produce a step-change.
+- Diagnosed a stronger root cause: generic pairwise training prompts did not match SciImpact's source tasks and dimensions.
+- Implemented source-task SciImpact SFT export and DPO system-prompt preservation in `src/local_impact_ranking/sciimpact_pairwise_sft.py`, with CLI/test updates.
+- Generated source-task training data at `runs/sciimpact-source-task-sft-dpo/`: `87984` SFT/DPO records, no invalid DPO records, balanced A/B labels, and only `4/87984` truncated at 4096 tokens while preserving prefix/suffix/response.
+- Trained source-task SFT adapter `runs/sciimpact-source-task-sft-dpo/checkpoints/qwen32b-source-task-sft16k-4096-512step`; seed23 direct accuracy was `0.670` and selected accuracy at margin `0.05` was `0.690`.
+- Trained source-task SFT+DPO adapter `runs/sciimpact-source-task-sft-dpo/checkpoints/qwen32b-source-task-sft16k4096-dpo16k1024-128step`.
+- Three-seed source-task DPO credibility result: mean direct `0.634 -> 0.659`, mean selected `0.662 -> 0.669`, mean consistency `0.631 -> 0.789` against the previous recommended adapter.
+- Disclosed caveat: strict `allowed_slice_regression=0.05` does not promote because seed71 `patent` regresses by `0.060`; `allowed_slice_regression=0.06` passes and is documented as the active default threshold for this adapter.
+- Negative follow-ups were run and rejected: patent/downloads slice-targeted DPO worsened mean metrics, and 4096-length DPO did not improve the first-seed result enough to justify expansion.
+- Updated active serving defaults to `local-impact-judge-source-task-dpo` and adapter `qwen32b-source-task-sft16k4096-dpo16k1024-128step`.
+- Targeted source-task/docs/script verification passed: `58 passed`.
+- Full test suite passed after the source-task documentation/default update: `374 passed`.
+- No-model deliverable check passed at `/tmp/local-impact-deliverable-check-no-model` with quickstart, SciImpact smoke, and `deliverable_status.json`.
+- Model-backed deliverable check passed at `/tmp/local-impact-deliverable-check-model` using GPU4/port 8010, `local-impact-judge-source-task-dpo`, and generated model-backed `impact_scores.csv`, `model_impact_report.md`, and `report_bundle`.
+- Started stronger source-task candidate training: `runs/sciimpact-source-task-strong/checkpoints/qwen32b-source-task-sft32k-4096-1024step`, with `32000` balanced-metadata SFT examples, `max_length=4096`, and `1024` optimizer steps. Tokenization preflight reported zero truncation and full prefix/suffix/response retention. Early training loss is finite.
+- Ran a source-task DPO confidence calibration cross-check at `runs/sciimpact-source-task-dpo-confidence-heldout-p50`. The adapter's raw validation calibration was already decent (ECE `0.045373`, Brier `0.217641`); same-run empirical bins overfit and worsened ECE to `0.093333`, while the bundled SciImpact trust-prior profile improved ECE to `0.029138` with near-unchanged Brier `0.219402`.
+- Completed strong source-task candidate training and quick gate:
+  - SFT adapter: `runs/sciimpact-source-task-strong/checkpoints/qwen32b-source-task-sft32k-4096-1024step`.
+  - DPO adapter: `runs/sciimpact-source-task-strong/checkpoints/qwen32b-source-task-sft32k4096-dpo32k1024-128step`.
+  - Strong SFT seed23 p50: direct `0.673333`, selected `0.710000`, consistency `0.730000`.
+  - Strong SFT+DPO seed23 p50: direct `0.670000`, selected `0.713333`, consistency `0.730000`.
+  - Active source-task DPO default on the same seed23 p50 sample remains direct `0.680000`, selected `0.703333`, consistency `0.763333`.
+  - Decision: do not promote the strong candidate or expand to three seeds. The selected-accuracy gain is small and comes with direct-accuracy and position-consistency regressions.
 
 ## 2026-05-25
 
@@ -100,3 +594,299 @@
 - Same300 result: DPO hit_rate `0.753333` vs base `0.746667`; mean_ndcg `0.583968` vs `0.576676`; target-level net hit change `+2`.
 - Verification: strict audit check reported 300 unique records, no outside-first300 records, no missing-first300 records.
 - Verification: `PYTHONNOUSERSITE=1 PYTHONPATH=src /root/miniconda3/envs/air/bin/python3.11 -m pytest -q` reported `122 passed`.
+
+- Diagnosed why current impact quality still feels weak: the SFT16k+DPO16k Qwen32B adapter has only moderate SciImpact accuracy (`0.662` mean selected across three p50 seeds) and only a small gain over DPO64 (`+0.007`). Errors concentrate in citation/downloads/media/patent and artifact-card tasks; high-confidence wrong examples remain common.
+- Identified a concrete model-design bottleneck: local LoRA training used `max_length=1024`, while SciImpact official training uses `cutoff_len=4096` and task scripts preserve much longer GitHub/HF card contexts. This likely hurts dataset/github/model/card tasks and argues for long-context training/evaluation before more small DPO tweaks.
+- Design implication: the next credible improvement should be a larger route, not another prompt tweak: stronger local teacher or 4096-context impact judge, multi-dimensional evidence extraction, and stricter reportability gates separating evidence-supported scores from model-only exploratory scores.
+
+- Implemented the long-context training prerequisite for the next impact-judge improvement pass.
+  - Fixed SFT and DPO tokenization so long prompts use head+tail prompt truncation while preserving full answer tokens, instead of dropping the task/pair prefix by keeping only the sequence tail.
+  - Added `inspect-sft-tokenization` CLI and JSON/Markdown reports for prefix, suffix, response, and prompt-retention diagnostics before training.
+  - Changed `train-sft` and `train-dpo` default `--max-length` from `1536` to `4096`; smaller values can still be passed explicitly for smoke tests.
+  - Added `scripts/train_sciimpact_qwen32b_long_context_sft.sh`, which runs tokenization preflight before launching a 4096-context SFT run.
+  - Real full SciImpact SFT tokenization inspection on `87984` records: at `1024`, `12718` examples truncated (`14.4549%`) and mean prompt retention was `0.913004`; at `4096`, `2461` examples truncated (`2.7971%`) and mean prompt retention was `0.997316`. Prefix/suffix/response retention were `1.000` after the fix in both settings.
+  - Verification: related tests passed with `100 passed`.
+  - With the available H100 memory, the long-context route was upgraded from 4096 to 16384 tokens. Full SciImpact SFT inspection showed `8192` truncates only `4/87984` examples (`0.0045%`, mean retention `0.999996`), while `16384` truncates `0/87984` examples (`0.0%`, mean retention `1.0`). The next serious local judge run should therefore use the 16k SFT script and validate quality on held-out SciImpact seeds before claiming any model improvement.
+## 2026-05-30
+
+- Started the final credibility upgrade requested by the user: move the deliverable from model-primary `impact_index_v2` to evidence-first `impact_index_v3`.
+- Added failing tests for external adoption evidence and then implemented the passing v3 scoring layer.
+- `impact_index_v3` now combines `evidence_supported_score` and `model_supported_score`, while keeping `impact_index_v2` for compatibility.
+- Added external evidence parsing from `metadata.external_impact`, `metadata.impact`, `metadata.metrics`, `metadata`, and top-level extra fields.
+- Supported external evidence fields now include external field/year percentile, patent citations, policy citations, software mentions, GitHub/repository stars, dataset reuse/citations/downloads, and model/download evidence.
+- Updated `model-score-dataset` summary, CSV output, Markdown report, README, scoring docs, input schema docs, and doc tests for v3 terminology and evidence requirements.
+- Verification after v3 upgrade:
+  - Targeted v3/CLI/docs/report tests passed.
+  - Full test suite passed: `377 passed`.
+  - Publish readiness passed: `Publish readiness checks passed`.
+  - No-model deliverable check completed at `/tmp/local-impact-v3-deliverable-no-model`; model smoke was skipped by design.
+  - GPU check showed no training workers; existing vLLM services remain on GPU4/8010 and GPU5/8000.
+- After fixing calibrated fusion weight compatibility with v3, final verification passed again:
+  - Full test suite: `377 passed`.
+  - Publish readiness: `Publish readiness checks passed`.
+- Additional credibility tightening:
+  - Fixed evidence-tier inflation: zero patent/policy/adoption counts no longer count as positive external evidence for `credible_evidence_tier`.
+  - Added an `Evidence Gaps` section to `model_impact_report.md` so missing high-value evidence is visible in the human report, not only in CSV/JSON.
+  - Verification passed after the tightening:
+    - Full test suite: `378 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- Reportability upgrade:
+  - Final `reportability_status` now uses `impact_index_v3` evidence-first rules instead of the older v2 signal-count heuristic.
+  - Added `reportability_basis=impact_index_v3_evidence_first` and preserved `legacy_reportability_status` / `legacy_reportability_reason` for audit.
+  - Evidence-supported high-tier papers with complete high-value external evidence can be `reportable`; model-assisted or incomplete evidence remains `exploratory` or `low_confidence`.
+  - Verification passed:
+    - Full test suite: `378 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- Credibility-adjusted final score:
+  - Kept `impact_index_v3` as the raw evidence-first score.
+  - Added `credibility_adjusted_impact_score`, `credibility_adjustment_factor`, and `credibility_adjustment_reason`.
+  - Changed `final_impact_score` and ranking sort order to use the credibility-adjusted score, so model-only or weak-evidence rows are conservatively discounted.
+  - Updated CSV, Markdown report notes, README, and scoring docs.
+  - Verification passed:
+    - Full test suite: `379 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- OpenAlex evidence ingestion:
+  - Added `enrich-openalex` to populate citation counts, yearly citation histories, OpenAlex IDs, and OpenAlex field/year percentile evidence from DOI or OpenAlex work IDs.
+  - Verification passed:
+    - Full test suite: `382 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- OpenCitations evidence ingestion:
+  - Added `enrich-opencitations` for DOI-level OpenCitations COCI/index v2 evidence.
+  - It writes `opencitations_cited_by_count`, `opencitations_reference_count`, and matched incoming DOI edges.
+  - With `--materialize-internal-edges`, OpenCitations DOI matches add dataset-internal references, so existing `citation_graph_score` and PageRank can use external citation-graph evidence even when the original input omitted those edges.
+  - Verification passed:
+    - Focused enrichment/docs tests: `25 passed`.
+    - Full test suite: `387 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- External evidence readiness gate:
+  - Added `external-evidence-readiness` to report DOI/OpenAlex ID coverage, OpenAlex/OpenCitations source coverage, citation count/history coverage, field/year percentile coverage, patent/policy/artifact evidence coverage, and materialized citation-graph edge counts.
+  - The command returns a decision: `ready_for_high_credibility_scoring`, `usable_with_disclosure`, or `insufficient_external_evidence`.
+  - This does not change scores; it prevents overclaiming when external evidence coverage is too sparse.
+  - Integrated the same readiness report into `model-score-dataset`, the full `run` command, `artifact_index.json`, and report bundles.
+  - Integrated external evidence readiness into `project-readiness`; incomplete external evidence now downgrades the final project decision to `needs_improvement` with disclosure instead of silently allowing high-credibility claims.
+  - Verification passed:
+    - Focused project-readiness/docs tests: `9 passed`.
+    - Full test suite: `393 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- Per-paper external evidence coverage:
+  - Added `external_evidence_paper_coverage.csv` beside the external evidence readiness report.
+  - The CSV lists DOI/OpenAlex, OpenAlex/OpenCitations enrichment, citation count/history, field/year percentile, patent/policy/artifact, and graph-edge coverage per paper, plus `missing_evidence` labels for audit.
+  - Added `paper_coverage_summary` to external evidence readiness JSON/Markdown and surfaced the same missing-evidence summary in `model_impact_report.md`.
+  - Included the CSV in `run` artifacts, `model-score-dataset` outputs, artifact indexing, and report bundles.
+  - Added deliverable-script checks and project-readiness evidence-file links so the CSV is verified and easy to find in final handoff reports.
+  - Verification passed:
+    - Focused external-evidence/model-report/project-readiness/deliverable tests: `24 passed`.
+    - No-model deliverable check passed at `/tmp/local-impact-deliverable-external-coverage`.
+    - Full test suite: `395 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- Continuous impact validity evaluation:
+  - Added `evaluate-impact-validity` for future-window or external continuous impact labels.
+  - The report computes `spearman_correlation`, `kendall_tau_b`, `pairwise_accuracy`, `ndcg_at_top_k`, top-k precision/recall, field slices, and a conservative decision.
+  - Added JSON/Markdown outputs, CLI wiring, README/evaluation-method documentation, report-bundle inclusion, and project-readiness display when the optional report exists.
+  - Marked `impact_validity_evaluation.json/md` as optional artifacts so ordinary no-label runs stay complete while validated runs can carry the evidence.
+  - Verification passed:
+    - Focused validity/artifact/readiness/docs tests: `34 passed`.
+    - Full test suite: `399 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+    - No-model deliverable check passed at `/tmp/local-impact-deliverable-validity-optional`.
+- Future-window label derivation:
+  - Added `derive-future-impact-labels` to turn yearly citation histories from OpenAlex or compatible metadata into `future_impact_labels.jsonl/csv`.
+  - This closes the practical gap between enrichment and `evaluate-impact-validity`: users can backtest scores against a later citation window without hand-building labels.
+  - Documented the workflow in README and `docs/evaluation-method.md`.
+  - Verification passed:
+    - Focused future-label/validity/docs tests: `23 passed`.
+    - Full test suite: `402 passed`.
+    - Publish readiness: `Publish readiness checks passed`.
+- Citation cutoff for leakage-safe backtesting:
+  - Added `apply-citation-cutoff` to remove citation-history years after a cutoff and rewrite citation totals before scoring.
+  - This prevents future-window validation from leaking future citation evidence into the scoring input.
+  - Updated README and `docs/evaluation-method.md` to document the leakage-safe workflow: enrich, cutoff, score cutoff data, derive future labels from uncropped data, then run `evaluate-impact-validity`.
+  - Added `audit-citation-cutoff` to write `citation_cutoff_audit.json/md` and fail when any post-cutoff citation-history years remain.
+  - Added the audit command to the publish-readiness README gate so leakage-audit documentation is required before publishing.
+  - Verification passed:
+    - Focused cutoff/future-label/validity/docs tests: `14 passed`.
+    - Full test suite: `408 passed`.
+    - Publish readiness: `408 passed`, `Publish readiness checks passed.`
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-citation-audit`; model smoke was skipped and `gh` was reported as an optional environment warning.
+- Citation cutoff audit integration:
+  - Added `citation_cutoff_audit.json/md` as optional run artifacts.
+  - Added those files to report bundles when present.
+  - Added project-readiness gating for future-window validity:
+    - no impact-validity report: cutoff audit remains optional;
+    - impact-validity report present but cutoff audit missing: readiness warning;
+    - cutoff audit failed: readiness blocks future-window validity claims.
+  - Updated README and `docs/evaluation-method.md` to write cutoff audit outputs under `reports/` so final bundles carry leakage-safety evidence.
+  - Verification passed:
+    - Focused artifact/report-bundle/readiness/docs tests: `18 passed`.
+    - Related cutoff/future-label/validity/readiness/docs regression: `45 passed`.
+    - Full test suite: `411 passed`.
+    - Publish readiness: `411 passed`, `Publish readiness checks passed.`
+- Impact validity statistical evidence:
+  - Added bootstrap confidence intervals to `impact_validity_evaluation.json/md` for Spearman, Kendall tau-b, pairwise accuracy, and NDCG@K.
+  - Added a permutation random-label baseline with p-values for the same metrics.
+  - Added `statistical_significance.significant_vs_random`; future-window validity is no longer treated as usable when point metrics are not statistically supported against random labels.
+  - Added CLI options `--bootstrap-samples`, `--permutation-samples`, and `--random-seed`.
+  - Project readiness now surfaces `impact_validity_significant_vs_random` and `impact_validity_p_value`.
+  - Updated README and `docs/evaluation-method.md` to document bootstrap intervals, permutation baseline, and random-like-score rejection.
+  - Verification passed:
+    - Focused validity/docs/readiness tests: `9 passed`.
+    - Related cutoff/future-label/validity/readiness/docs regression: `47 passed`.
+    - Full test suite: `413 passed`.
+    - Publish readiness: `413 passed`, `Publish readiness checks passed.`
+- Impact validity readiness gate:
+  - Project readiness now consumes `impact_validity_evaluation.json` as a quality gate, not only as display evidence.
+  - If a validity report exists but is not statistically supported against the permutation random baseline, readiness adds `impact_validity_statistically_supported` as a warning and recommends not claiming validated impact accuracy.
+  - This keeps the project report honest when future-window validation is run and the score is random-like.
+  - Verification passed:
+    - Focused readiness/docs tests: `3 passed`.
+    - Related validity/cutoff/readiness/docs regression: `48 passed`.
+    - Full test suite: `414 passed`.
+    - Publish readiness: `414 passed`, `Publish readiness checks passed.`
+- Backtest evidence workflow:
+  - Added `backtest-impact-validity` to generate the future-window validity evidence bundle after a cutoff scoring run.
+  - The workflow writes:
+    - `reports/citation_cutoff_audit.json/md`;
+    - `future-labels/future_impact_labels.jsonl/csv`;
+    - `reports/impact_validity_evaluation.json/md`;
+    - `impact_backtest_manifest.json`.
+  - This reduces user error by keeping cutoff audit, future labels, and statistical validity evidence in the run directory expected by `project-readiness` and `report-bundle`.
+  - Updated README, `docs/evaluation-method.md`, and publish readiness checks.
+  - Verification passed:
+    - Focused workflow/docs tests: `4 passed`.
+    - Related CLI/validity/cutoff/readiness/docs regression: `94 passed`.
+    - Full test suite: `416 passed`.
+    - Publish readiness: `416 passed`, `Publish readiness checks passed.`
+- Deliverable backtest smoke:
+  - Extended `scripts/run_deliverable_check.sh` with a no-GPU `backtest-impact-validity` fixture.
+  - The deliverable check now verifies `reports/citation_cutoff_audit.json`, `reports/impact_validity_evaluation.json`, `future-labels/future_impact_labels.jsonl`, and `impact_backtest_manifest.json`.
+  - Real smoke passed at `/tmp/local-impact-deliverable-backtest`; the tiny two-paper fixture correctly reports `validity=insufficient_validation_data` rather than overclaiming validation.
+  - Verification passed:
+    - Focused script test: `1 passed`.
+    - Full test suite: `416 passed`.
+    - Publish readiness: `416 passed`, `Publish readiness checks passed.`
+- Future-label normalization:
+  - Added `--normalization raw|log1p|field-year-percentile` to `derive-future-impact-labels`.
+  - Added `--label-normalization` to `backtest-impact-validity`; the backtest workflow defaults to `field-year-percentile`.
+  - Future-label files now keep `future_impact_raw` while allowing `future_impact` to be field/year-normalized for fairer cross-field and cross-cohort validation.
+  - Updated README, `docs/evaluation-method.md`, and the no-GPU deliverable backtest smoke.
+  - Real deliverable smoke passed at `/tmp/local-impact-deliverable-normalized-labels` with `label_normalization=field_year_percentile`.
+  - Verification passed:
+    - Focused future-label/backtest/docs/script tests: `9 passed`.
+    - Related validity/cutoff/readiness/docs/scripts regression: `73 passed`.
+    - Full test suite: `417 passed`.
+    - Publish readiness: `417 passed`, `Publish readiness checks passed.`
+- Impact validity label coverage gate:
+  - `impact_validity_evaluation.json/md` now reports `ranking_paper_count`, `label_paper_count`, `matched_paper_count`, `score_label_match_rate`, and `label_match_rate`.
+  - `project-readiness` now warns when future-window validity labels match less than half of the scored ranking table, even if point metrics look strong.
+  - This prevents sparse entity matching or label coverage from being overclaimed as high-credibility validation.
+  - Updated README and `docs/evaluation-method.md`.
+  - Verification passed:
+    - Focused validity/readiness/docs tests: `10 passed`.
+    - Related validity/backtest/future-label/readiness/docs/scripts regression: `75 passed`.
+    - No-GPU deliverable check passed at `/tmp/local-impact-deliverable-match-coverage`.
+    - Full test suite: `419 passed`.
+    - Publish readiness: `419 passed`, `Publish readiness checks passed.`
+- Impact validity unmatched-ID audit:
+  - `impact_validity_evaluation.json/md` now includes `coverage_examples` with `unmatched_score_ids` and `unmatched_label_ids`.
+  - This makes low `score_label_match_rate` actionable by showing which scored papers or label rows failed to match.
+  - Updated README and `docs/evaluation-method.md`.
+  - Verification passed:
+    - Focused validity/docs tests: `9 passed`.
+    - Related validity/backtest/future-label/readiness/docs/scripts regression: `76 passed`.
+    - Full test suite: `420 passed`.
+    - Publish readiness: `420 passed`, `Publish readiness checks passed.`
+- SciImpact model promotion gate:
+  - Added `compare-sciimpact-model-candidate` and `sciimpact_model_candidate_gate.json/md`.
+  - The gate compares a candidate model's cross-seed credibility summary against the current default model summary and returns `promote` only when pooled accuracy, worst seed, stability, weak slices, worst slice, evaluation count, and credibility status pass.
+  - Generated the real weak-slice DPO gate report at `runs/sciimpact-weak-slice-candidate/eval/weak-slice-dpo-promotion-gate`.
+  - Result: `do_not_promote`; pooled accuracy delta `-0.008889`, min seed accuracy delta `-0.020`.
+  - Focused SciImpact model-eval tests passed: `34 passed`.
+  - Full verification passed:
+    - Full test suite: `463 passed`.
+    - Publish readiness: `463 passed`, `Publish readiness checks passed.`
+- Self-mined weak-slice model experiment:
+  - Generated train-split stratified predictions from the current source-task DPO model at `runs/sciimpact-source-task-selfmine-train-p200`.
+  - Train diagnostic: 1200 examples, accuracy `0.659`, weak slices `5`, train-safe weak-slice errors `259`, high-confidence errors `18`.
+  - Candidate data validation passed: SFT `raw=259 loaded=259 invalid=0`; DPO `raw=259 loaded=259 invalid=0 duplicates=0 reverse_conflicts=0`.
+  - Trained 64-step DPO adapter at `runs/sciimpact-source-task-selfmine-train-p200/checkpoints/qwen32b-source-task-dpo-selfmine-p200-64step`.
+  - Held-out p50 results: seed23 `0.663`, seed47 `0.650`, seed71 `0.633`.
+  - Three-seed summary: pooled accuracy `0.648889`, min seed accuracy `0.633333`, status `moderate_credibility`.
+  - Promotion gate: `do_not_promote`, pooled delta `-0.010`, min-seed delta `-0.013334`.
+  - Stopped the GPU6 candidate service after evaluation; GPU4 current default and GPU5 base services remain running.
+  - Final publish readiness after this experiment passed: `463 passed`, `Publish readiness checks passed.`
+- Product-deliverable refocus:
+  - Added `scripts/run_impact_demo.sh`, a no-GPU end-to-end demo for the original user workflow.
+  - Added offline demo inputs under `examples/impact_demo_papers.jsonl`, `examples/impact_demo_pairwise_judgments.jsonl`, and `examples/impact_demo_future_labels.jsonl`.
+  - Real demo run passed at `/tmp/local-impact-offline-demo`.
+  - Full no-GPU deliverable check with the demo included passed at `/tmp/local-impact-deliverable-with-demo`.
+  - Output includes `impact_scores.csv`, `model_impact_report.md`, `impact_score_cards.md`, `impact_claim_certificate.md`, `impact_validity/impact_credibility_scorecard.json`, `report_bundle/`, and `demo_status.json`.
+  - The demo explicitly reports dataset-local scores and does not claim global scientific impact.
+  - Publish readiness passed after adding the demo path: `464 passed`, `Publish readiness checks passed.`
+- Demo report handoff:
+  - Added `demo_report.md` to `scripts/run_impact_demo.sh` so the no-GPU demo has a concise human-readable handoff report.
+  - Fixed the report to read claim fields from `impact_claim_certificate.json["claim"]`, preventing blank claim-status rows.
+  - Added runtime checks for nonempty `claim.status` and `claim.reason`.
+  - Verification passed:
+    - Focused script tests: `2 passed`.
+    - Real no-GPU demo: `/tmp/local-impact-offline-demo-report-fixed`.
+    - Script/docs tests: `42 passed`.
+    - Full no-GPU deliverable check: `/tmp/local-impact-deliverable-demo-report-fixed`.
+    - Publish readiness: `464 passed`, `Publish readiness checks passed.`
+- Model-backed deliverable smoke:
+  - Verified the current recommended local Qwen judge service on GPU4 at `http://localhost:8010/v1` with model `local-impact-judge-source-task-dpo`.
+  - Ran `scripts/run_deliverable_check.sh` with `CHECK_MODEL=1` at `/tmp/local-impact-deliverable-with-model`.
+  - Result: `deliverable_status.json` reports `model_smoke=passed`.
+  - The model branch wrote `model-impact/impact_scores.csv`, `model_impact_report.md`, `impact_claim_certificate.md`, and `report_bundle/`.
+  - The fixture result is intentionally bounded: `status=evidence_supported`, `can_claim_validated_impact_accuracy=no`, `can_claim_high_credibility=no`, and all papers are exploratory because the fixture lacks external calibrated evidence and future-window labels.
+- User dataset one-command entrypoint:
+  - Added `scripts/run_user_impact.sh` as the direct user-data path for the original project goal.
+  - The script validates an input JSONL dataset, writes `model-score-preflight`, checks the local OpenAI-compatible model server when model calls are needed, runs `model-score-dataset`, creates a report bundle, and writes `user_impact_status.json`.
+  - Added `user_impact_summary.md`, a short human-readable report with claim boundary, run status, top final impact scores, and key artifact paths.
+  - Defaults are conservative: `PAIR_BUDGET=auto`, `PAIR_SAMPLING=coverage`, `TARGET_PAPER_COVERAGE=0.25`, `BIDIRECTIONAL_PAIRWISE=1`, calibrated confidence from `configs/calibration/sciimpact-qwen32b-heldout-p50.json`, and a pairwise checkpoint journal.
+  - It supports saved judgment replay with `PAIRWISE_JUDGMENTS`, interrupted-run resume with `RESUME_PAIRWISE_JUDGMENTS` and `PAIRWISE_JOURNAL`, optional `VALIDITY_LABELS`, and optional `FUSION_WEIGHTS`.
+  - Verified no-GPU replay mode at `/tmp/local-impact-user-impact-replay`; `user_impact_status.json` reports `claim_status=evidence_supported`.
+  - Verified summary-report replay mode at `/tmp/local-impact-user-impact-summary-replay`; `user_impact_summary.md` includes `claim_status=evidence_supported`, `ranking_quality_status=reportable`, and top final scores.
+  - Verified real model mode against GPU4 at `/tmp/local-impact-user-impact-model-smoke`; `pairwise_judgment_source.type=model`, `claim_status=evidence_supported`, and claim boundaries remain unvalidated/high-credibility false without external validity labels.
+  - Updated README and publish readiness so the user-data entrypoint is release-gated.
+- User entrypoint delivery gate:
+  - Integrated `scripts/run_user_impact.sh` into `scripts/run_deliverable_check.sh` using no-GPU pairwise replay on the demo papers.
+  - The deliverable check now verifies `user_impact_status.json`, `user_impact_summary.md`, `model-impact/impact_scores.csv`, the claim certificate, and the report bundle.
+  - Real deliverable check passed at `/tmp/local-impact-deliverable-with-user-entry`; `deliverable_status.json` now includes `user_impact=passed`.
+  - Script/docs tests passed: `43 passed`.
+- User summary credibility guidance:
+  - Extended `user_impact_summary.md` with `Evidence Gaps` and `Recommended Next Actions`.
+  - The evidence gap table is driven by `external_evidence_readiness.json.paper_coverage_summary.top_missing_evidence`, so users can immediately see missing DOI/OpenAlex IDs, enrichment, field/year evidence, graph evidence, and similar bottlenecks.
+  - The next-action list is driven by `impact_claim_certificate.json.recommended_next_actions`, keeping the summary aligned with claim boundaries.
+  - Verified replay output at `/tmp/local-impact-user-impact-evidence-gaps`.
+  - Verified full deliverable output at `/tmp/local-impact-deliverable-evidence-gaps`; `user_impact_summary.md` includes the evidence-gap section and recommended actions.
+- User report decision:
+  - Added `report_decision` and `report_decision_reason` to `user_impact_status.json` and `user_impact_summary.md`.
+  - Decision statuses are `blocked`, `validated_report`, `report_with_disclosure`, and `exploratory_only`.
+  - The decision combines the claim certificate with `ranking_quality.status`, so users get a direct answer about whether scores can be reported and under what disclosure boundary.
+  - Verified replay output at `/tmp/local-impact-user-impact-report-decision`; the demo corpus reports `report_decision=report_with_disclosure`.
+- Current project summary report:
+  - Rewrote `docs/planning/project-summary-report.md` so the report-facing summary reflects the current deliverable system rather than the older MVP state.
+  - The summary now covers `run_user_impact.sh`, `user_impact_summary.md`, `report_decision`, `impact_index_v3`, `local-impact-judge-source-task-dpo`, `model_smoke=passed`, `465 passed`, and the dataset-local/not-global claim boundary.
+  - Added a docs regression test so the summary cannot silently drift back to an outdated status.
+- User entrypoint help:
+  - Added `scripts/run_user_impact.sh --help`.
+  - The help text documents required arguments, core outputs, common environment variables, replay/resume/validity/fusion overrides, and the dataset-local claim boundary.
+  - Verified the help command, bash syntax, and focused script test.
+- User validation disclosure:
+  - Added input validation disclosure to `user_impact_status.json` and `user_impact_summary.md`.
+  - The summary now reports `validation_issue_count`, `validation_error_count`, `validation_warning_count`, `validation_can_run`, and the first validation issues.
+  - `report_decision_reason` now includes a validation disclosure sentence when input validation reports issues.
+  - Verified replay output at `/tmp/local-impact-user-impact-validation-summary`; the demo corpus now surfaces the `empty_reference_list` issue instead of hiding it behind a reportable score.
+- User run presets:
+  - Added `RUN_PRESET=quick|balanced|full|custom` to `scripts/run_user_impact.sh`.
+  - Presets adjust `MAX_PAIRS`, `TARGET_PAPER_COVERAGE`, and `CONCURRENCY` only when the user has not explicitly set those variables.
+  - `custom` remains the default, preserving prior behavior.
+  - The selected preset is written to `user_impact_status.json` and `user_impact_summary.md`.
+  - Verified `RUN_PRESET=quick` at `/tmp/local-impact-user-impact-quick-preset`; preflight used `requested_max_pairs=50`, `target_paper_coverage=0.1`, and `run_preset=quick`.
+- Model credibility evidence card:
+  - Added `configs/model_credibility/local-impact-judge-source-task-dpo.json`, a publishable summary of the recommended judge's three-seed SciImpact credibility evidence.
+  - The profile records pooled accuracy `0.658889`, min-seed accuracy `0.646667`, `900` covered examples, `moderate_credibility`, grade `B`, significant-above-random support, and weak slices such as `dataset`, `stars`, `github_repo`, `downloads`, and `patent`.
+  - `scripts/run_user_impact.sh` now reads `MODEL_CREDIBILITY_REPORT` and writes model credibility fields to `user_impact_status.json` plus a `Model Credibility` section in `user_impact_summary.md`.
+  - The section explicitly shows `can_claim_high_model_credibility=false`, so the model is treated as benchmark-supported but not a high-credibility standalone oracle.
+  - `scripts/run_deliverable_check.sh` now verifies the model credibility section in the user-impact summary.
+  - Verified replay output at `/tmp/local-impact-user-impact-model-credibility` and full deliverable output at `/tmp/local-impact-deliverable-model-credibility`.

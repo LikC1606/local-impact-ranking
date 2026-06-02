@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,22 @@ def evaluate_pairwise_labels(
         if len(examples) < max_examples:
             examples.append(row)
 
+    summary = _summarize(outcomes)
+    by_dimension = _summarize_groups(outcomes, "impact_dimension")
+    by_field = _summarize_groups(outcomes, "field")
+    significance = _statistical_significance(summary)
+    scorecard = _credibility_scorecard(
+        summary,
+        significance=significance,
+        by_dimension=by_dimension,
+        by_field=by_field,
+    )
     return {
-        "summary": _summarize(outcomes),
-        "by_dimension": _summarize_groups(outcomes, "impact_dimension"),
-        "by_field": _summarize_groups(outcomes, "field"),
+        "summary": summary,
+        "statistical_significance": significance,
+        "credibility_scorecard": scorecard,
+        "by_dimension": by_dimension,
+        "by_field": by_field,
         "examples": examples,
     }
 
@@ -77,10 +90,22 @@ def write_pairwise_evaluation(
         render_pairwise_evaluation_markdown(report),
         encoding="utf-8",
     )
+    (destination / "pairwise_credibility_scorecard.json").write_text(
+        json.dumps(report["credibility_scorecard"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (destination / "pairwise_credibility_scorecard.md").write_text(
+        render_pairwise_credibility_scorecard_markdown(
+            report["credibility_scorecard"]
+        ),
+        encoding="utf-8",
+    )
     return report
 
 
 def render_pairwise_evaluation_markdown(report: dict[str, Any]) -> str:
+    scorecard = report.get("credibility_scorecard", {})
+    significance = report.get("statistical_significance", {})
     lines = [
         "# Pairwise Impact Evaluation",
         "",
@@ -91,6 +116,24 @@ def render_pairwise_evaluation_markdown(report: dict[str, Any]) -> str:
     ]
     for key, value in report["summary"].items():
         lines.append(f"| {key} | {_format_value(value)} |")
+    lines.extend(
+        [
+            f"| significant_vs_random | {_yes_no(significance.get('significant_vs_random'))} |",
+            f"| significance_p_value | {_format_value(significance.get('p_value'))} |",
+            f"| credibility_status | {scorecard.get('status', '')} |",
+            f"| credibility_grade | {scorecard.get('grade', '')} |",
+            "",
+            "## Credibility Scorecard",
+            "",
+            "| Check | Status | Value | Reason |",
+            "| --- | --- | ---: | --- |",
+        ]
+    )
+    for name, check in scorecard.get("checks", {}).items():
+        lines.append(
+            f"| {name} | {check.get('status', '')} | "
+            f"{_format_value(check.get('value'))} | {check.get('reason', '')} |"
+        )
     lines.extend(
         [
             "",
@@ -127,6 +170,45 @@ def render_pairwise_evaluation_markdown(report: dict[str, Any]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def render_pairwise_credibility_scorecard_markdown(scorecard: dict[str, Any]) -> str:
+    lines = [
+        "# Pairwise Credibility Scorecard",
+        "",
+        "## Decision",
+        "",
+        "| Item | Value |",
+        "| --- | --- |",
+        f"| status | {scorecard.get('status', '')} |",
+        f"| grade | {scorecard.get('grade', '')} |",
+        f"| can_claim_high_benchmark_credibility | {_yes_no(scorecard.get('can_claim_high_benchmark_credibility'))} |",
+        f"| reason | {scorecard.get('reason', '')} |",
+        "",
+        "## Checks",
+        "",
+        "| Check | Status | Value | Reason |",
+        "| --- | --- | ---: | --- |",
+    ]
+    for name, check in scorecard.get("checks", {}).items():
+        lines.append(
+            f"| {name} | {check.get('status', '')} | "
+            f"{_format_value(check.get('value'))} | {check.get('reason', '')} |"
+        )
+    lines.extend(["", "## Blocking Reasons", ""])
+    blockers = scorecard.get("blocking_reasons", [])
+    if blockers:
+        lines.extend(f"- {item}" for item in blockers)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Warnings", ""])
+    warnings = scorecard.get("warnings", [])
+    if warnings:
+        lines.extend(f"- {item}" for item in warnings)
+    else:
+        lines.append("- None")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -201,11 +283,192 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "correct_pairs": correct,
         "wrong_pairs": wrong,
         "tie_pairs": ties,
+        "non_tie_pairs": non_tie,
         "coverage_rate": _safe_divide(covered, total),
         "pairwise_accuracy": _safe_divide(correct, covered),
         "non_tie_pairwise_accuracy": _safe_divide(correct, non_tie),
         "tie_rate": _safe_divide(ties, covered),
     }
+
+
+def _statistical_significance(summary: dict[str, Any]) -> dict[str, Any]:
+    trials = int(summary.get("non_tie_pairs", 0) or 0)
+    successes = int(summary.get("correct_pairs", 0) or 0)
+    observed = _safe_divide(successes, trials)
+    ci95 = _wilson_ci(successes, trials)
+    p_value = _binomial_greater_equal_p_value(successes, trials)
+    significant = trials >= 20 and observed > 0.5 and ci95[0] > 0.5 and p_value <= 0.05
+    if significant:
+        status = "statistically_supported"
+        reason = "Non-tie pairwise accuracy is significantly above a random 0.5 baseline."
+    elif trials < 20:
+        status = "insufficient_validation_data"
+        reason = "Fewer than 20 non-tie covered pairs; benchmark significance is not claimed."
+    else:
+        status = "not_statistically_supported"
+        reason = "Pairwise benchmark accuracy is not significantly above random."
+    return {
+        "status": status,
+        "reason": reason,
+        "tested_metric": "non_tie_pairwise_accuracy",
+        "successes": successes,
+        "trials": trials,
+        "observed": observed,
+        "wilson_ci95": ci95,
+        "p_value": p_value,
+        "significant_vs_random": significant,
+    }
+
+
+def _credibility_scorecard(
+    summary: dict[str, Any],
+    *,
+    significance: dict[str, Any],
+    by_dimension: dict[str, dict[str, Any]],
+    by_field: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    checks = {
+        "coverage": _coverage_check(summary),
+        "statistical_support": _statistical_support_check(significance),
+        "benchmark_accuracy": _benchmark_accuracy_check(summary),
+        "tie_rate": _tie_rate_check(summary),
+        "slice_stability": _slice_stability_check(by_dimension, by_field),
+    }
+    blocking = [
+        check["reason"]
+        for name, check in checks.items()
+        if check["status"] == "fail"
+        and name in {"coverage", "statistical_support", "benchmark_accuracy"}
+    ]
+    warnings = [
+        check["reason"] for check in checks.values() if check["status"] == "warn"
+    ]
+    fail_count = sum(1 for check in checks.values() if check["status"] == "fail")
+    pass_count = sum(1 for check in checks.values() if check["status"] == "pass")
+    if int(summary.get("non_tie_pairs", 0) or 0) < 20:
+        status = "insufficient_validation_data"
+        grade = "D"
+        reason = "Fewer than 20 non-tie covered pairs; use this as a smoke check only."
+    elif blocking:
+        status = "not_credible"
+        grade = "D"
+        reason = blocking[0]
+    elif pass_count == len(checks):
+        status = "high_credibility"
+        grade = "A"
+        reason = "Pairwise benchmark validity passes coverage, significance, accuracy, tie, and slice checks."
+    elif fail_count == 0 and checks["statistical_support"]["status"] == "pass":
+        status = "moderate_credibility"
+        grade = "B"
+        reason = "Pairwise benchmark validity is supported, with warnings to disclose."
+    else:
+        status = "low_credibility"
+        grade = "C"
+        reason = "Pairwise benchmark validity has partial signal but does not meet high-credibility thresholds."
+    return {
+        "status": status,
+        "grade": grade,
+        "can_claim_high_benchmark_credibility": status == "high_credibility",
+        "reason": reason,
+        "checks": checks,
+        "blocking_reasons": blocking,
+        "warnings": warnings,
+    }
+
+
+def _coverage_check(summary: dict[str, Any]) -> dict[str, Any]:
+    value = float(summary.get("coverage_rate", 0.0) or 0.0)
+    if int(summary.get("total_pairs", 0) or 0) < 20:
+        return _check("fail", value, "Fewer than 20 benchmark pairs were supplied.")
+    if value >= 0.9:
+        return _check("pass", value, "At least 90% of benchmark pairs are covered.")
+    if value >= 0.75:
+        return _check("warn", value, "Benchmark coverage is usable but incomplete.")
+    return _check("fail", value, "Benchmark coverage is too low for a credible claim.")
+
+
+def _statistical_support_check(significance: dict[str, Any]) -> dict[str, Any]:
+    value = float(significance.get("observed", 0.0) or 0.0)
+    if significance.get("significant_vs_random"):
+        return _check("pass", value, "Accuracy is significantly above the random baseline.")
+    return _check("fail", value, significance.get("reason", "Benchmark significance failed."))
+
+
+def _benchmark_accuracy_check(summary: dict[str, Any]) -> dict[str, Any]:
+    pairwise = float(summary.get("pairwise_accuracy", 0.0) or 0.0)
+    non_tie = float(summary.get("non_tie_pairwise_accuracy", 0.0) or 0.0)
+    value = min(pairwise, non_tie)
+    if pairwise >= 0.6 and non_tie >= 0.65:
+        return _check("pass", value, "Pairwise and non-tie accuracy are both strong.")
+    if pairwise >= 0.55 or non_tie >= 0.58:
+        return _check("warn", value, "Benchmark accuracy has signal but is not strong.")
+    return _check("fail", value, "Benchmark accuracy is too close to random.")
+
+
+def _tie_rate_check(summary: dict[str, Any]) -> dict[str, Any]:
+    value = float(summary.get("tie_rate", 0.0) or 0.0)
+    if value <= 0.05:
+        return _check("pass", value, "Tie rate is low.")
+    if value <= 0.15:
+        return _check("warn", value, "Tie rate is elevated and should be disclosed.")
+    return _check("fail", value, "Tie rate is high enough to weaken pairwise conclusions.")
+
+
+def _slice_stability_check(
+    by_dimension: dict[str, dict[str, Any]],
+    by_field: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    eligible = [
+        (f"dimension:{name}", summary)
+        for name, summary in by_dimension.items()
+        if int(summary.get("non_tie_pairs", 0) or 0) >= 10
+    ] + [
+        (f"field:{name}", summary)
+        for name, summary in by_field.items()
+        if int(summary.get("non_tie_pairs", 0) or 0) >= 10
+    ]
+    if not eligible:
+        return _check(
+            "warn",
+            0.0,
+            "No dimension or field slice has at least 10 non-tie covered pairs.",
+        )
+    worst = min(
+        float(summary.get("non_tie_pairwise_accuracy", 0.0) or 0.0)
+        for _, summary in eligible
+    )
+    if worst >= 0.58:
+        return _check("pass", worst, "Eligible benchmark slices remain above random.")
+    if worst >= 0.5:
+        return _check("warn", worst, "At least one benchmark slice is weak.")
+    return _check("fail", worst, "At least one benchmark slice is below random.")
+
+
+def _check(status: str, value: float, reason: str) -> dict[str, Any]:
+    return {"status": status, "value": round(float(value), 6), "reason": reason}
+
+
+def _wilson_ci(successes: int, trials: int) -> list[float]:
+    if trials <= 0:
+        return [0.0, 0.0]
+    z = 1.959963984540054
+    p_hat = successes / trials
+    denominator = 1 + z * z / trials
+    center = (p_hat + z * z / (2 * trials)) / denominator
+    margin = z * math.sqrt((p_hat * (1 - p_hat) + z * z / (4 * trials)) / trials) / denominator
+    return [round(max(0.0, center - margin), 6), round(min(1.0, center + margin), 6)]
+
+
+def _binomial_greater_equal_p_value(successes: int, trials: int) -> float:
+    if trials <= 0:
+        return 1.0
+    if successes <= trials / 2:
+        return 1.0
+    if trials <= 1000:
+        probability = sum(math.comb(trials, k) for k in range(successes, trials + 1))
+        return round(probability * (0.5 ** trials), 6)
+    z = (successes - trials * 0.5 - 0.5) / math.sqrt(trials * 0.25)
+    return round(0.5 * math.erfc(z / math.sqrt(2)), 6)
 
 
 def _safe_divide(numerator: int, denominator: int) -> float:
@@ -224,3 +487,7 @@ def _format_value(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.3f}"
     return str(value)
+
+
+def _yes_no(value: Any) -> str:
+    return "yes" if bool(value) else "no"

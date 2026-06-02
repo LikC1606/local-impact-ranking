@@ -32,5 +32,7 @@ test -s "${OUTPUT}/converted/manifest.json"
 test -s "${OUTPUT}/rankings/papers.csv"
 test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.json"
 test -s "${OUTPUT}/pairwise_eval/pairwise_evaluation.md"
+test -s "${OUTPUT}/pairwise_eval/pairwise_credibility_scorecard.json"
+test -s "${OUTPUT}/pairwise_eval/pairwise_credibility_scorecard.md"
 
 echo "SciImpact pairwise smoke run complete: ${OUTPUT}"

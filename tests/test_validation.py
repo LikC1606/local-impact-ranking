@@ -42,7 +42,7 @@ def test_validation_report_flags_duplicate_ids_empty_references_and_bad_years(tm
 
     assert report["record_count"] == 2
     assert report["summary"]["issue_count"] == 5
-    assert report["summary"]["severity_counts"] == {"error": 4, "warning": 1}
+    assert report["summary"]["severity_counts"] == {"error": 3, "warning": 2}
     assert sorted(report["issues"], key=lambda issue: (issue["code"], issue["message"])) == sorted([
         {
             "severity": "error",
@@ -51,10 +51,10 @@ def test_validation_report_flags_duplicate_ids_empty_references_and_bad_years(tm
             "message": "paper_id appears 2 times",
         },
         {
-            "severity": "error",
+            "severity": "warning",
             "code": "empty_reference_list",
             "paper_id": "p1",
-            "message": "paper has no candidate references",
+            "message": "paper has no candidate references; evidence coverage may be weaker",
         },
         {
             "severity": "warning",
@@ -88,10 +88,10 @@ def test_render_validation_markdown_summarizes_issues():
             },
             "issues": [
                 {
-                    "severity": "error",
+                    "severity": "warning",
                     "code": "empty_reference_list",
                     "paper_id": "p1",
-                    "message": "paper has no candidate references",
+                    "message": "paper has no candidate references; evidence coverage may be weaker",
                 }
             ],
         }
@@ -99,4 +99,7 @@ def test_render_validation_markdown_summarizes_issues():
 
     assert markdown.startswith("# Validation Report\n")
     assert "| Can run | no |" in markdown
-    assert "| error | empty_reference_list | p1 | paper has no candidate references |" in markdown
+    assert (
+        "| warning | empty_reference_list | p1 | "
+        "paper has no candidate references; evidence coverage may be weaker |"
+    ) in markdown

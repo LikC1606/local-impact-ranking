@@ -14,7 +14,11 @@ from local_impact_ranking.audit import (
     write_prompt_audit,
 )
 from local_impact_ranking.anomalies import anomaly_report
-from local_impact_ranking.artifacts import RUN_ARTIFACTS, artifact_index
+from local_impact_ranking.artifacts import (
+    OPTIONAL_RUN_ARTIFACTS,
+    RUN_ARTIFACTS,
+    artifact_index,
+)
 from local_impact_ranking.benchmark_compare import (
     write_benchmark_comparison,
     write_gold_target_comparison,
@@ -36,7 +40,12 @@ from local_impact_ranking.baselines import (
     export_baseline_rankings,
     summarize_baseline_comparison,
 )
+from local_impact_ranking.citation_cutoff import (
+    write_citation_cutoff,
+    write_citation_cutoff_audit,
+)
 from local_impact_ranking.contexts import context_coverage_report
+from local_impact_ranking.credibility_report import write_credibility_report
 from local_impact_ranking.data_readiness import data_readiness_report
 from local_impact_ranking.doctor import doctor_report, render_doctor_markdown
 from local_impact_ranking.evaluate import evaluate_judge_results, render_evaluation_markdown
@@ -45,6 +54,13 @@ from local_impact_ranking.error_analysis import (
     render_gold_error_analysis_markdown,
 )
 from local_impact_ranking.entity_resolution import write_entity_resolution_report
+from local_impact_ranking.external_evidence_readiness import (
+    external_evidence_paper_coverage_rows,
+    external_evidence_readiness_report,
+    render_external_evidence_readiness_markdown,
+    write_external_evidence_paper_coverage_csv,
+)
+from local_impact_ranking.external_evidence_import import merge_external_impact_evidence
 from local_impact_ranking.explanations import (
     entity_influence_explanations,
     export_paper_evidence_csv,
@@ -57,9 +73,15 @@ from local_impact_ranking.export import (
     export_scoring_edges_csv,
 )
 from local_impact_ranking.finetune_export import export_finetuning_datasets
+from local_impact_ranking.future_impact_labels import write_future_impact_labels
 from local_impact_ranking.dpo_lora_train import (
     load_preference_examples_with_report,
     run_dpo_lora_training,
+)
+from local_impact_ranking.sft_lora_train import (
+    inspect_sft_tokenization,
+    load_sft_examples_with_report,
+    run_sft_lora_training,
 )
 from local_impact_ranking.gold_evaluation import (
     evaluate_gold_reference_selection,
@@ -70,6 +92,18 @@ from local_impact_ranking.gold_evaluation import (
     render_gold_evaluation_markdown,
 )
 from local_impact_ranking.io import convert_papers_csv_to_jsonl, load_papers_jsonl
+from local_impact_ranking.impact_claim_certificate import (
+    render_impact_claim_certificate_markdown,
+    write_impact_claim_certificate,
+)
+from local_impact_ranking.impact_backtest_workflow import write_impact_backtest
+from local_impact_ranking.impact_fusion_calibration import write_fusion_calibration
+from local_impact_ranking.impact_validity_evaluation import (
+    write_impact_validity_evaluation,
+)
+from local_impact_ranking.internal_citation_edges import (
+    materialize_internal_citation_edges,
+)
 from local_impact_ranking.judge import (
     HeuristicJudge,
     Judge,
@@ -78,9 +112,23 @@ from local_impact_ranking.judge import (
     error_result,
     with_judge_audit_metadata,
 )
-from local_impact_ranking.llamafactory_export import export_llamafactory_configs
+from local_impact_ranking.llamafactory_export import (
+    export_llamafactory_configs,
+    export_sciimpact_pairwise_sft_llamafactory_configs,
+)
 from local_impact_ranking.manifest import build_run_manifest, sha256_file
+from local_impact_ranking.model_impact_index import (
+    model_score_dataset,
+    write_model_score_preflight,
+)
 from local_impact_ranking.normalize import normalize_paper
+from local_impact_ranking.openalex_enrichment import enrich_papers_with_openalex
+from local_impact_ranking.opencitations_enrichment import (
+    enrich_papers_with_opencitations,
+)
+from local_impact_ranking.semantic_scholar_enrichment import (
+    enrich_papers_with_semantic_scholar,
+)
 from local_impact_ranking.pairwise_evaluation import write_pairwise_evaluation
 from local_impact_ranking.proxy_evaluation import evaluate_proxy_quality
 from local_impact_ranking.project_readiness import (
@@ -101,9 +149,22 @@ from local_impact_ranking.sciimpact_adapter import (
     export_sciimpact_dpo_jsonl,
 )
 from local_impact_ranking.sciimpact_baseline import write_sciimpact_text_baseline_rankings
+from local_impact_ranking.sciimpact_index_eval import write_sciimpact_index_evaluation
 from local_impact_ranking.sciimpact_model_eval import (
+    evaluate_sciimpact_flip_consistency,
     evaluate_sciimpact_predictions,
     generate_sciimpact_predictions,
+    write_sciimpact_model_candidate_gate,
+    write_sciimpact_model_credibility_summary,
+    write_sciimpact_model_weak_slice_error_pack,
+    write_sciimpact_calibration_split,
+    write_sciimpact_flipped_sft,
+    write_sciimpact_stratified_sample,
+)
+from local_impact_ranking.sciimpact_pairwise_sft import (
+    export_sciimpact_pairwise_dpo,
+    export_sciimpact_pairwise_sft,
+    mine_sciimpact_hard_pairwise_examples,
 )
 from local_impact_ranking.score_cards import (
     render_score_cards_markdown,
@@ -240,7 +301,7 @@ def train_dpo(
     output: Path = typer.Option(..., "--output", "-o"),
     max_steps: int = typer.Option(20, "--max-steps", min=1),
     max_examples: int | None = typer.Option(None, "--max-examples", min=1),
-    max_length: int = typer.Option(1536, "--max-length", min=1),
+    max_length: int = typer.Option(4096, "--max-length", min=1),
     beta: float = typer.Option(0.1, "--beta"),
     learning_rate: float = typer.Option(1e-6, "--learning-rate"),
     seed: int = typer.Option(13, "--seed"),
@@ -253,6 +314,8 @@ def train_dpo(
     lora_alpha: int = typer.Option(32, "--lora-alpha", min=1),
     lora_dropout: float = typer.Option(0.05, "--lora-dropout", min=0.0),
     device_map: str = typer.Option("auto", "--device-map"),
+    base_adapter: str | None = typer.Option(None, "--base-adapter"),
+    sampling_strategy: str = typer.Option("random", "--sampling-strategy"),
 ) -> None:
     run_dpo_lora_training(
         model_name_or_path=model,
@@ -269,8 +332,55 @@ def train_dpo(
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
         device_map=device_map,
+        base_adapter=base_adapter,
+        sampling_strategy=sampling_strategy.replace("-", "_"),
     )
     typer.echo(f"Wrote DPO adapter to {output}")
+
+
+@app.command("train-sft")
+def train_sft(
+    model: str = typer.Option(..., "--model"),
+    train_file: list[Path] = typer.Option(
+        ...,
+        "--train-file",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_steps: int = typer.Option(20, "--max-steps", min=1),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+    max_length: int = typer.Option(4096, "--max-length", min=1),
+    learning_rate: float = typer.Option(2e-5, "--learning-rate"),
+    seed: int = typer.Option(13, "--seed"),
+    gradient_accumulation_steps: int = typer.Option(
+        8,
+        "--gradient-accumulation-steps",
+        min=1,
+    ),
+    lora_r: int = typer.Option(16, "--lora-r", min=1),
+    lora_alpha: int = typer.Option(32, "--lora-alpha", min=1),
+    lora_dropout: float = typer.Option(0.05, "--lora-dropout", min=0.0),
+    device_map: str = typer.Option("auto", "--device-map"),
+    sampling_strategy: str = typer.Option("random", "--sampling-strategy"),
+) -> None:
+    run_sft_lora_training(
+        model_name_or_path=model,
+        train_files=train_file,
+        output_dir=output,
+        max_steps=max_steps,
+        max_examples=max_examples,
+        max_length=max_length,
+        learning_rate=learning_rate,
+        seed=seed,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        lora_r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        device_map=device_map,
+        sampling_strategy=sampling_strategy,
+    )
+    typer.echo(f"Wrote SFT adapter to {output}")
 
 
 @app.command("validate-dpo-data")
@@ -298,6 +408,73 @@ def validate_dpo_data(
         f"invalid={loaded.report['invalid_record_count']} "
         f"duplicates={loaded.report['duplicate_pair_count']} "
         f"reverse_conflicts={loaded.report['reverse_conflict_count']}"
+    )
+
+
+@app.command("validate-sft-data")
+def validate_sft_data(
+    train_file: list[Path] = typer.Option(
+        ...,
+        "--train-file",
+        exists=True,
+        readable=True,
+    ),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+) -> None:
+    loaded = load_sft_examples_with_report(train_file, limit=max_examples)
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "sft_data_validation.json").write_text(
+            json.dumps(loaded.report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    typer.echo(
+        "SFT data validation: "
+        f"raw={loaded.report['raw_record_count']} "
+        f"loaded={loaded.report['loaded_example_count']} "
+        f"invalid={loaded.report['invalid_record_count']}"
+    )
+
+
+@app.command("inspect-sft-tokenization")
+def inspect_sft_tokenization_cmd(
+    model: str = typer.Option(..., "--model"),
+    train_file: list[Path] = typer.Option(
+        ...,
+        "--train-file",
+        exists=True,
+        readable=True,
+    ),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    max_length: int = typer.Option(4096, "--max-length", min=1),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+) -> None:
+    tokenizer = _load_tokenizer_for_inspection(model)
+    report = inspect_sft_tokenization(
+        train_file,
+        tokenizer=tokenizer,
+        max_length=max_length,
+        max_examples=max_examples,
+    )
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "sft_tokenization_report.json").write_text(
+            json.dumps(report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (output / "sft_tokenization_report.md").write_text(
+            _render_sft_tokenization_report_markdown(report),
+            encoding="utf-8",
+        )
+    summary = report["summary"]
+    typer.echo(
+        "SFT tokenization inspection: "
+        f"loaded={summary['loaded_example_count']} "
+        f"truncated={summary['truncated_example_count']} "
+        f"prefix_retained_rate={summary['prefix_retained_rate']:.3f} "
+        f"suffix_retained_rate={summary['suffix_retained_rate']:.3f} "
+        f"response_fully_retained_rate={summary['response_fully_retained_rate']:.3f}"
     )
 
 
@@ -400,11 +577,597 @@ def evaluate_pairwise_impact(
         score_column=score_column,
     )
     summary = report["summary"]
+    scorecard = report.get("credibility_scorecard", {})
     typer.echo(
         "Wrote pairwise impact evaluation to "
         f"{output} (pairwise_accuracy={summary['pairwise_accuracy']:.3f}, "
-        f"coverage_rate={summary['coverage_rate']:.3f})"
+        f"coverage_rate={summary['coverage_rate']:.3f}, "
+        f"credibility={scorecard.get('status', 'unknown')})"
     )
+
+
+@app.command("evaluate-impact-validity")
+def evaluate_impact_validity_cmd(
+    rankings: Path = typer.Option(..., "--rankings", exists=True, readable=True),
+    labels: Path = typer.Option(..., "--labels", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    score_column: str | None = typer.Option(None, "--score-column"),
+    label_column: str = typer.Option("future_impact", "--label-column"),
+    top_fraction: float = typer.Option(0.1, "--top-fraction", min=0.0, max=1.0),
+    min_label_delta: float = typer.Option(0.0, "--min-label-delta", min=0.0),
+    bootstrap_samples: int = typer.Option(200, "--bootstrap-samples", min=0),
+    permutation_samples: int = typer.Option(200, "--permutation-samples", min=0),
+    random_seed: int = typer.Option(0, "--random-seed"),
+) -> None:
+    report = write_impact_validity_evaluation(
+        rankings,
+        labels,
+        output,
+        score_column=score_column,
+        label_column=label_column,
+        top_fraction=top_fraction,
+        min_label_delta=min_label_delta,
+        bootstrap_samples=bootstrap_samples,
+        permutation_samples=permutation_samples,
+        random_seed=random_seed,
+    )
+    summary = report["summary"]
+    significance = report.get("statistical_significance", {})
+    scorecard = report.get("credibility_scorecard", {})
+    typer.echo(
+        "Wrote impact validity evaluation to "
+        f"{output} (spearman={summary['spearman_correlation']:.3f}, "
+        f"pairwise_accuracy={summary['pairwise_accuracy']:.3f}, "
+        f"ndcg_at_top_k={summary['ndcg_at_top_k']:.3f}, "
+        f"significant_vs_random={significance.get('significant_vs_random', False)}, "
+        f"credibility={scorecard.get('status', 'unknown')})"
+    )
+
+
+@app.command("derive-future-impact-labels")
+def derive_future_impact_labels_cmd(
+    input_path: Path = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    start_year: int = typer.Option(..., "--start-year"),
+    end_year: int = typer.Option(..., "--end-year"),
+    label_column: str = typer.Option("future_impact", "--label-column"),
+    normalization: str = typer.Option("raw", "--normalization"),
+) -> None:
+    report = write_future_impact_labels(
+        input_path,
+        output,
+        start_year=start_year,
+        end_year=end_year,
+        label_column=label_column,
+        normalization=normalization,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote future impact labels to "
+        f"{output} (labels={summary['label_count']} "
+        f"skipped={summary['skipped_count']} "
+        f"normalization={summary['normalization']})"
+    )
+
+
+@app.command("apply-citation-cutoff")
+def apply_citation_cutoff_cmd(
+    input_path: Path = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    cutoff_year: int = typer.Option(..., "--cutoff-year"),
+) -> None:
+    report = write_citation_cutoff(
+        input_path,
+        output,
+        cutoff_year=cutoff_year,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote citation-cutoff dataset to "
+        f"{output} (cutoff_year={summary['cutoff_year']} "
+        f"updated_histories={summary['updated_citation_history_count']})"
+    )
+
+
+@app.command("audit-citation-cutoff")
+def audit_citation_cutoff_cmd(
+    input_path: Path = typer.Option(
+        ...,
+        "--input",
+        "-i",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    cutoff_year: int = typer.Option(..., "--cutoff-year"),
+) -> None:
+    report = write_citation_cutoff_audit(
+        input_path,
+        output,
+        cutoff_year=cutoff_year,
+    )
+    decision = report["decision"]
+    summary = report["summary"]
+    typer.echo(
+        "Wrote citation-cutoff audit to "
+        f"{output} (status={decision['status']} "
+        f"future_year_papers={summary['papers_with_future_years']})"
+    )
+
+
+@app.command("backtest-impact-validity")
+def backtest_impact_validity_cmd(
+    enriched_input: Path = typer.Option(
+        ...,
+        "--enriched-input",
+        exists=True,
+        readable=True,
+    ),
+    cutoff_input: Path = typer.Option(
+        ...,
+        "--cutoff-input",
+        exists=True,
+        readable=True,
+    ),
+    rankings: Path = typer.Option(..., "--rankings", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    cutoff_year: int = typer.Option(..., "--cutoff-year"),
+    future_start_year: int = typer.Option(..., "--future-start-year"),
+    future_end_year: int = typer.Option(..., "--future-end-year"),
+    score_column: str | None = typer.Option(None, "--score-column"),
+    label_column: str = typer.Option("future_impact", "--label-column"),
+    label_normalization: str = typer.Option(
+        "field-year-percentile",
+        "--label-normalization",
+    ),
+    top_fraction: float = typer.Option(0.1, "--top-fraction", min=0.0, max=1.0),
+    min_label_delta: float = typer.Option(0.0, "--min-label-delta", min=0.0),
+    bootstrap_samples: int = typer.Option(200, "--bootstrap-samples", min=0),
+    permutation_samples: int = typer.Option(200, "--permutation-samples", min=0),
+    random_seed: int = typer.Option(0, "--random-seed"),
+) -> None:
+    manifest = write_impact_backtest(
+        enriched_input=enriched_input,
+        cutoff_input=cutoff_input,
+        rankings=rankings,
+        output_dir=output,
+        cutoff_year=cutoff_year,
+        future_start_year=future_start_year,
+        future_end_year=future_end_year,
+        score_column=score_column,
+        label_column=label_column,
+        label_normalization=label_normalization,
+        top_fraction=top_fraction,
+        min_label_delta=min_label_delta,
+        bootstrap_samples=bootstrap_samples,
+        permutation_samples=permutation_samples,
+        random_seed=random_seed,
+    )
+    summary = manifest["summary"]
+    typer.echo(
+        "Wrote impact backtest evidence to "
+        f"{output} (cutoff_audit={summary['cutoff_audit_status']} "
+        f"label_normalization={summary['label_normalization']} "
+        f"labels={summary['future_label_count']} "
+        f"validity={summary['validity_status']} "
+        f"significant_vs_random={summary['validity_significant_vs_random']})"
+    )
+
+
+@app.command("calibrate-fusion-weights")
+def calibrate_fusion_weights_cmd(
+    rankings: Path = typer.Option(..., "--rankings", exists=True, readable=True),
+    labels: Path = typer.Option(..., "--labels", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    grid_step: float = typer.Option(0.1, "--grid-step", min=0.01, max=1.0),
+) -> None:
+    report = write_fusion_calibration(
+        rankings,
+        labels,
+        output,
+        grid_step=grid_step,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote fusion calibration to "
+        f"{output} (best_pairwise_accuracy={summary['best_pairwise_accuracy']:.3f}, "
+        f"covered_pairs={summary['covered_pairs']}, "
+        f"profile={summary.get('weight_profile', 'unknown')})"
+    )
+
+
+@app.command("enrich-openalex")
+def enrich_openalex_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    email: str | None = typer.Option(None, "--email"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+) -> None:
+    summary = enrich_papers_with_openalex(
+        input,
+        output,
+        email=email,
+        timeout=timeout,
+    )
+    typer.echo(
+        "Wrote OpenAlex-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-opencitations")
+def enrich_opencitations_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    token: str | None = typer.Option(None, "--token"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    include_edges: bool = typer.Option(
+        True,
+        "--include-edges/--no-include-edges",
+    ),
+    materialize_internal_edges: bool = typer.Option(
+        False,
+        "--materialize-internal-edges/--no-materialize-internal-edges",
+    ),
+) -> None:
+    summary = enrich_papers_with_opencitations(
+        input,
+        output,
+        token=token,
+        timeout=timeout,
+        include_edges=include_edges,
+        materialize_internal_edges=materialize_internal_edges,
+    )
+    typer.echo(
+        "Wrote OpenCitations-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']}, "
+        f"internal_edges={summary['internal_incoming_edge_count']}, "
+        f"materialized_edges={summary['materialized_internal_edge_count']})"
+    )
+
+
+@app.command("enrich-semantic-scholar")
+def enrich_semantic_scholar_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+) -> None:
+    summary = enrich_papers_with_semantic_scholar(
+        input,
+        output,
+        api_key=api_key,
+        timeout=timeout,
+    )
+    typer.echo(
+        "Wrote Semantic Scholar-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']}, "
+        f"title_matches={summary['title_match_count']})"
+    )
+
+
+@app.command("materialize-internal-citations")
+def materialize_internal_citations_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    title_threshold: float = typer.Option(0.95, "--title-threshold", min=0.0, max=1.0),
+    openalex_references: bool = typer.Option(
+        False,
+        "--openalex-references/--no-openalex-references",
+    ),
+    openalex_email: str | None = typer.Option(None, "--openalex-email"),
+    openalex_timeout: float = typer.Option(30.0, "--openalex-timeout", min=1.0),
+) -> None:
+    summary = materialize_internal_citation_edges(
+        input,
+        output,
+        summary_output=summary_output,
+        title_threshold=title_threshold,
+        openalex_references=openalex_references,
+        openalex_email=openalex_email,
+        openalex_timeout=openalex_timeout,
+    )
+    typer.echo(
+        "Wrote papers with materialized internal citation edges to "
+        f"{output} (materialized={summary['materialized_internal_edge_count']}, "
+        f"existing={summary['existing_internal_edge_count']}, "
+        f"unmatched_references={summary['unmatched_reference_count']})"
+    )
+
+
+@app.command("external-evidence-readiness")
+def external_evidence_readiness_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    markdown: bool = typer.Option(False, "--markdown/--json"),
+) -> None:
+    papers = load_papers_jsonl(input)
+    report = external_evidence_readiness_report(papers)
+    rendered = render_external_evidence_readiness_markdown(report)
+    coverage_rows = external_evidence_paper_coverage_rows(papers)
+    if output is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "external_evidence_readiness.json").write_text(
+            json.dumps(report, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (output / "external_evidence_readiness.md").write_text(
+            rendered,
+            encoding="utf-8",
+        )
+        write_external_evidence_paper_coverage_csv(
+            coverage_rows,
+            output / "external_evidence_paper_coverage.csv",
+        )
+    if markdown:
+        typer.echo(rendered)
+    else:
+        typer.echo(json.dumps(report, indent=2))
+
+
+@app.command("import-external-evidence")
+def import_external_evidence_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    evidence: Path = typer.Option(..., "--evidence", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+) -> None:
+    summary = merge_external_impact_evidence(input, evidence, output)
+    if summary_output is not None:
+        summary_output.parent.mkdir(parents=True, exist_ok=True)
+        summary_output.write_text(
+            json.dumps(summary, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    typer.echo(
+        "Imported external evidence to "
+        f"{output} (papers={summary['paper_count']}, matched={summary['matched_count']})"
+    )
+
+
+@app.command("model-score-preflight")
+def model_score_preflight_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_pairs: int | None = typer.Option(None, "--max-pairs", min=1),
+    pair_budget: str = typer.Option("manual", "--pair-budget"),
+    target_paper_coverage: float = typer.Option(
+        1.0,
+        "--target-paper-coverage",
+        min=0.0,
+        max=1.0,
+    ),
+    comparison_rounds: int = typer.Option(1, "--comparison-rounds", min=1),
+    shuffle_pairs: bool = typer.Option(False, "--shuffle-pairs/--no-shuffle-pairs"),
+    pair_sampling: str = typer.Option("sequential", "--pair-sampling"),
+    seed: int = typer.Option(0, "--seed"),
+    direct_score: bool = typer.Option(False, "--direct-score/--no-direct-score"),
+    bidirectional_pairwise: bool = typer.Option(
+        False,
+        "--bidirectional-pairwise/--single-direction-pairwise",
+    ),
+    resume_pairwise_judgments: Path | None = typer.Option(
+        None,
+        "--resume-pairwise-judgments",
+        exists=True,
+        readable=True,
+    ),
+) -> None:
+    report = write_model_score_preflight(
+        input,
+        output,
+        max_pairs=max_pairs,
+        pair_budget=pair_budget,
+        target_paper_coverage=target_paper_coverage,
+        comparison_rounds=comparison_rounds,
+        shuffle_pairs=shuffle_pairs,
+        pair_sampling=pair_sampling,
+        seed=seed,
+        direct_score=direct_score,
+        bidirectional_pairwise=bidirectional_pairwise,
+        resume_pairwise_judgments_path=resume_pairwise_judgments,
+    )
+    typer.echo(
+        "Wrote model score preflight to "
+        f"{output} (papers={report['paper_count']}, "
+        f"requests={report['request_estimate']['total_model_request_count']})"
+    )
+
+
+@app.command("model-score-dataset")
+def model_score_dataset_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    base_url: str = typer.Option("http://localhost:8000/v1", "--base-url"),
+    model: str = typer.Option(..., "--model"),
+    api_key: str = typer.Option("EMPTY", "--api-key"),
+    timeout: float = typer.Option(120.0, "--timeout"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    max_tokens: int | None = typer.Option(512, "--max-tokens", min=1),
+    max_pairs: int | None = typer.Option(None, "--max-pairs", min=1),
+    pair_budget: str = typer.Option("manual", "--pair-budget"),
+    target_paper_coverage: float = typer.Option(
+        1.0,
+        "--target-paper-coverage",
+        min=0.0,
+        max=1.0,
+    ),
+    comparison_rounds: int = typer.Option(1, "--comparison-rounds", min=1),
+    shuffle_pairs: bool = typer.Option(False, "--shuffle-pairs/--no-shuffle-pairs"),
+    pair_sampling: str = typer.Option("sequential", "--pair-sampling"),
+    seed: int = typer.Option(0, "--seed"),
+    concurrency: int = typer.Option(1, "--concurrency", min=1),
+    direct_score: bool = typer.Option(False, "--direct-score/--no-direct-score"),
+    calibration_report: Path | None = typer.Option(
+        None,
+        "--calibration-report",
+        exists=True,
+        readable=True,
+    ),
+    fusion_weights: Path | None = typer.Option(
+        None,
+        "--fusion-weights",
+        exists=True,
+        readable=True,
+    ),
+    bidirectional_pairwise: bool = typer.Option(
+        False,
+        "--bidirectional-pairwise/--single-direction-pairwise",
+    ),
+    bidirectional_confidence_margin: float = typer.Option(
+        0.0,
+        "--bidirectional-confidence-margin",
+        min=0.0,
+    ),
+    pairwise_aggregation: str = typer.Option(
+        "rank_centrality",
+        "--pairwise-aggregation",
+        help="Pairwise aggregation method: rank_centrality or elo.",
+    ),
+    pairwise_judgments: Path | None = typer.Option(
+        None,
+        "--pairwise-judgments",
+        exists=True,
+        readable=True,
+        help="Replay an existing pairwise_judgments.jsonl file instead of calling the model for pairwise judgments.",
+    ),
+    resume_pairwise_judgments: Path | None = typer.Option(
+        None,
+        "--resume-pairwise-judgments",
+        exists=True,
+        readable=True,
+        help="Load existing pairwise judgments and call the model only for missing planned pairs.",
+    ),
+    pairwise_journal: Path | None = typer.Option(
+        None,
+        "--pairwise-journal",
+        help="Write each newly generated pairwise judgment to this JSONL checkpoint as soon as it completes.",
+    ),
+    validity_labels: Path | None = typer.Option(
+        None,
+        "--validity-labels",
+        exists=True,
+        readable=True,
+    ),
+    validity_label_column: str = typer.Option(
+        "future_impact",
+        "--validity-label-column",
+    ),
+    validity_bootstrap_samples: int = typer.Option(
+        200,
+        "--validity-bootstrap-samples",
+        min=0,
+    ),
+    validity_permutation_samples: int = typer.Option(
+        200,
+        "--validity-permutation-samples",
+        min=0,
+    ),
+    pairwise_stability_samples: int = typer.Option(
+        0,
+        "--pairwise-stability-samples",
+        min=0,
+        help="Bootstrap samples for pairwise judgment stability auditing. Use 0 to disable.",
+    ),
+    pairwise_stability_top_n: int = typer.Option(
+        20,
+        "--pairwise-stability-top-n",
+        min=1,
+        help="Number of top model-pairwise papers to track in the stability report.",
+    ),
+    pairwise_stability_seed: int = typer.Option(
+        17,
+        "--pairwise-stability-seed",
+        help="Random seed for pairwise stability bootstrap.",
+    ),
+    final_score_stability_samples: int = typer.Option(
+        0,
+        "--final-score-stability-samples",
+        min=0,
+        help="Bootstrap samples for final fused score stability auditing. Use 0 to disable.",
+    ),
+    final_score_stability_top_n: int = typer.Option(
+        20,
+        "--final-score-stability-top-n",
+        min=1,
+        help="Number of top final-impact-score papers to track in the stability report.",
+    ),
+    final_score_stability_seed: int = typer.Option(
+        23,
+        "--final-score-stability-seed",
+        help="Random seed for final score stability bootstrap.",
+    ),
+    report_bundle: bool = typer.Option(
+        False,
+        "--report-bundle/--no-report-bundle",
+    ),
+    report_bundle_output: Path | None = typer.Option(
+        None,
+        "--report-bundle-output",
+    ),
+) -> None:
+    report = model_score_dataset(
+        input,
+        output,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        max_pairs=max_pairs,
+        pair_budget=pair_budget,
+        target_paper_coverage=target_paper_coverage,
+        comparison_rounds=comparison_rounds,
+        shuffle_pairs=shuffle_pairs,
+        pair_sampling=pair_sampling,
+        seed=seed,
+        concurrency=concurrency,
+        direct_score=direct_score,
+        calibration_report_path=calibration_report,
+        fusion_weights_path=fusion_weights,
+        bidirectional_pairwise=bidirectional_pairwise,
+        bidirectional_confidence_margin=bidirectional_confidence_margin,
+        pairwise_aggregation_method=pairwise_aggregation,
+        pairwise_judgments_path=pairwise_judgments,
+        resume_pairwise_judgments_path=resume_pairwise_judgments,
+        pairwise_journal_path=pairwise_journal,
+        validity_labels_path=validity_labels,
+        validity_label_column=validity_label_column,
+        validity_bootstrap_samples=validity_bootstrap_samples,
+        validity_permutation_samples=validity_permutation_samples,
+        pairwise_stability_samples=pairwise_stability_samples,
+        pairwise_stability_top_n=pairwise_stability_top_n,
+        pairwise_stability_seed=pairwise_stability_seed,
+        final_score_stability_samples=final_score_stability_samples,
+        final_score_stability_top_n=final_score_stability_top_n,
+        final_score_stability_seed=final_score_stability_seed,
+    )
+    typer.echo(
+        "Wrote model impact index to "
+        f"{output} (papers={report['summary']['paper_count']}, "
+        f"judgments={report['summary']['judgment_count']})"
+    )
+    if report_bundle:
+        bundle_output = report_bundle_output or (output / "report_bundle")
+        write_report_bundle(output, bundle_output)
+        typer.echo(f"Wrote model score report bundle to {bundle_output}")
 
 
 @app.command("entity-resolution-report")
@@ -432,6 +1195,62 @@ def benchmark_status(
         typer.echo(json.dumps(report, indent=2))
 
 
+@app.command("credibility-report")
+def credibility_report_command(
+    baseline_run: list[Path] = typer.Option(
+        ...,
+        "--baseline-run",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    candidate_run: list[Path] = typer.Option(
+        ...,
+        "--candidate-run",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    baseline_model: str = typer.Option("baseline", "--baseline-model"),
+    candidate_model: str = typer.Option("candidate", "--candidate-model"),
+    seed_label: list[str] | None = typer.Option(None, "--seed-label"),
+    min_selected_delta: float = typer.Option(0.0, "--min-selected-delta"),
+    min_seed_count: int = typer.Option(1, "--min-seed-count", min=1),
+    allowed_seed_selected_regression: float = typer.Option(
+        0.0,
+        "--allowed-seed-selected-regression",
+        min=0.0,
+    ),
+    allowed_slice_regression: float | None = typer.Option(
+        None,
+        "--allowed-slice-regression",
+        min=0.0,
+    ),
+) -> None:
+    try:
+        report = write_credibility_report(
+            baseline_runs=baseline_run,
+            candidate_runs=candidate_run,
+            output_dir=output,
+            baseline_model=baseline_model,
+            candidate_model=candidate_model,
+            seed_labels=seed_label,
+            min_selected_delta=min_selected_delta,
+            min_seed_count=min_seed_count,
+            allowed_seed_selected_regression=allowed_seed_selected_regression,
+            allowed_slice_regression=allowed_slice_regression,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "Wrote credibility report to "
+        f"{output} (recommendation={report['decision']['recommendation']})"
+    )
+
+
 @app.command("project-readiness")
 def project_readiness(
     run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
@@ -444,12 +1263,28 @@ def project_readiness(
         typer.echo(json.dumps(report, indent=2))
 
 
+@app.command("impact-claim-certificate")
+def impact_claim_certificate(
+    run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    markdown: bool = typer.Option(False, "--markdown/--json"),
+    top_n: int = typer.Option(10, "--top-n", min=1),
+) -> None:
+    certificate = write_impact_claim_certificate(run_dir, output, top_n=top_n)
+    if markdown:
+        typer.echo(render_impact_claim_certificate_markdown(certificate))
+    else:
+        destination = output if output is not None else _impact_claim_default_output(run_dir)
+        typer.echo(f"Wrote impact claim certificate to {destination}")
+
+
 @app.command("report-bundle")
 def report_bundle(
     run_dir: Path = typer.Argument(..., exists=True, file_okay=False, readable=True),
     output: Path = typer.Option(..., "--output", "-o"),
 ) -> None:
     _write_project_readiness_with_artifact_index(run_dir)
+    write_impact_claim_certificate(run_dir)
     write_report_bundle(run_dir, output)
     typer.echo(f"Wrote report bundle to {output}")
 
@@ -789,6 +1624,8 @@ def run(
     current_scoring_config = scoring_config(credit_mode)
     context_report = context_coverage_report(papers)
     readiness_report = data_readiness_report(papers)
+    external_readiness_report = external_evidence_readiness_report(papers)
+    external_paper_coverage_rows = external_evidence_paper_coverage_rows(papers)
     baseline_report = summarize_baseline_comparison(
         scores.paper_scores,
         baselines,
@@ -915,6 +1752,18 @@ def run(
     (reports_dir / "data_readiness.json").write_text(
         json.dumps(readiness_report, indent=2) + "\n",
         encoding="utf-8",
+    )
+    (reports_dir / "external_evidence_readiness.json").write_text(
+        json.dumps(external_readiness_report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (reports_dir / "external_evidence_readiness.md").write_text(
+        render_external_evidence_readiness_markdown(external_readiness_report),
+        encoding="utf-8",
+    )
+    write_external_evidence_paper_coverage_csv(
+        external_paper_coverage_rows,
+        reports_dir / "external_evidence_paper_coverage.csv",
     )
     (reports_dir / "baseline_comparison.json").write_text(
         json.dumps(baseline_report, indent=2) + "\n",
@@ -1083,13 +1932,415 @@ def evaluate_sciimpact_predictions_cmd(
     sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
     predictions: Path = typer.Option(..., "--predictions", exists=True, readable=True),
     output: Path = typer.Option(..., "--output", "-o"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    calibration_report: Path | None = typer.Option(
+        None,
+        "--calibration-report",
+        exists=True,
+        readable=True,
+    ),
 ) -> None:
-    report = evaluate_sciimpact_predictions(sft, predictions, output)
+    report = evaluate_sciimpact_predictions(
+        sft,
+        predictions,
+        output,
+        limit=limit,
+        calibration_report_path=calibration_report,
+    )
     typer.echo(
         "Wrote SciImpact prediction evaluation to "
         f"{output} (accuracy={report['summary']['accuracy']:.3f}, "
-        f"coverage_rate={report['summary']['coverage_rate']:.3f})"
+        f"coverage_rate={report['summary']['coverage_rate']:.3f}, "
+        f"credibility={report.get('credibility_scorecard', {}).get('status', 'unknown')})"
     )
+
+
+@app.command("summarize-sciimpact-model-credibility")
+def summarize_sciimpact_model_credibility_cmd(
+    eval: list[Path] = typer.Option(  # noqa: A002
+        ...,
+        "--eval",
+        exists=True,
+        readable=True,
+        help="Evaluation directory or sciimpact_model_eval.json file.",
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    report = write_sciimpact_model_credibility_summary(eval, output)
+    summary = report["summary"]
+    scorecard = report["credibility_scorecard"]
+    typer.echo(
+        "Wrote SciImpact model credibility summary to "
+        f"{output} (evaluations={summary['evaluation_count']}, "
+        f"pooled_accuracy={summary['pooled_accuracy']:.3f}, "
+        f"mean_accuracy={summary['mean_accuracy']:.3f}, "
+        f"status={scorecard.get('status', 'unknown')})"
+    )
+
+
+@app.command("compare-sciimpact-model-candidate")
+def compare_sciimpact_model_candidate_cmd(
+    baseline_summary: Path = typer.Option(
+        ...,
+        "--baseline-summary",
+        exists=True,
+        readable=True,
+        help="Baseline sciimpact_model_credibility_summary.json or its directory.",
+    ),
+    candidate_summary: Path = typer.Option(
+        ...,
+        "--candidate-summary",
+        exists=True,
+        readable=True,
+        help="Candidate sciimpact_model_credibility_summary.json or its directory.",
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    min_pooled_accuracy_delta: float = typer.Option(
+        0.005,
+        "--min-pooled-accuracy-delta",
+        help="Minimum pooled accuracy gain required for promotion.",
+    ),
+    min_evaluations: int = typer.Option(
+        3,
+        "--min-evaluations",
+        help="Minimum candidate evaluation count required for promotion.",
+    ),
+    max_min_seed_accuracy_regression: float = typer.Option(
+        0.0,
+        "--max-min-seed-accuracy-regression",
+        help="Allowed regression in the candidate's worst-seed accuracy.",
+    ),
+    max_accuracy_range_increase: float = typer.Option(
+        0.02,
+        "--max-accuracy-range-increase",
+        help="Allowed increase in seed-to-seed accuracy range.",
+    ),
+    max_weak_slice_count_increase: int = typer.Option(
+        0,
+        "--max-weak-slice-count-increase",
+        help="Allowed increase in weak dimension/item-type slice count.",
+    ),
+    max_worst_slice_regression: float = typer.Option(
+        0.02,
+        "--max-worst-slice-regression",
+        help="Allowed regression in worst eligible slice accuracy.",
+    ),
+) -> None:
+    report = write_sciimpact_model_candidate_gate(
+        baseline_summary,
+        candidate_summary,
+        output,
+        min_pooled_accuracy_delta=min_pooled_accuracy_delta,
+        min_evaluations=min_evaluations,
+        max_min_seed_accuracy_regression=max_min_seed_accuracy_regression,
+        max_accuracy_range_increase=max_accuracy_range_increase,
+        max_weak_slice_count_increase=max_weak_slice_count_increase,
+        max_worst_slice_regression=max_worst_slice_regression,
+    )
+    comparison = report["comparison"]
+    typer.echo(
+        "Wrote SciImpact model candidate gate to "
+        f"{output} (decision={report['decision']}, "
+        f"pooled_delta={comparison['pooled_accuracy_delta']:.3f}, "
+        f"min_seed_delta={comparison['min_seed_accuracy_delta']:.3f})"
+    )
+
+
+@app.command("export-sciimpact-model-weak-slice-errors")
+def export_sciimpact_model_weak_slice_errors_cmd(
+    eval: list[Path] = typer.Option(  # noqa: A002
+        ...,
+        "--eval",
+        exists=True,
+        readable=True,
+        help="Evaluation directory or sciimpact_model_eval.json file.",
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    sft: list[Path] | None = typer.Option(
+        None,
+        "--sft",
+        exists=True,
+        readable=True,
+        help="SFT JSONL aligned with each --eval, used to export training JSONL.",
+    ),
+    prompt_style: str = typer.Option(
+        "source-task",
+        "--prompt-style",
+        help="Training prompt style for exported SFT/DPO rows.",
+    ),
+    weak_slice_threshold: float = typer.Option(0.60, "--weak-slice-threshold"),
+    training_source: bool = typer.Option(
+        False,
+        "--training-source/--diagnostic-only",
+        help="Mark the source as safe training-split diagnostics.",
+    ),
+) -> None:
+    report = write_sciimpact_model_weak_slice_error_pack(
+        eval,
+        output,
+        weak_slice_threshold=weak_slice_threshold,
+        training_source=training_source,
+        sft_paths=sft,
+        prompt_style=prompt_style,
+    )
+    manifest = report["manifest"]
+    typer.echo(
+        "Wrote SciImpact weak-slice error pack to "
+        f"{output} (weak_slices={manifest['weak_slice_count']}, "
+        f"errors={manifest['error_count']}, "
+        f"use={manifest['recommended_use']})"
+    )
+
+
+@app.command("split-sciimpact-calibration")
+def split_sciimpact_calibration_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    predictions: Path = typer.Option(..., "--predictions", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    calibration_fraction: float = typer.Option(0.5, "--calibration-fraction"),
+    seed: int = typer.Option(0, "--seed"),
+) -> None:
+    try:
+        manifest = write_sciimpact_calibration_split(
+            sft,
+            predictions,
+            output,
+            calibration_fraction=calibration_fraction,
+            seed=seed,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "Wrote SciImpact calibration split to "
+        f"{output} (calibration={manifest['calibration_count']}, "
+        f"validation={manifest['validation_count']})"
+    )
+
+
+@app.command("flip-sciimpact-sft")
+def flip_sciimpact_sft_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
+) -> None:
+    manifest = write_sciimpact_flipped_sft(
+        sft,
+        output,
+        limit=limit,
+        skip_invalid=not strict,
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['flipped_record_count']} flipped SciImpact examples to {output} "
+        f"(skipped={manifest['skipped_record_count']})"
+    )
+
+
+@app.command("evaluate-sciimpact-flip-consistency")
+def evaluate_sciimpact_flip_consistency_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    predictions: Path = typer.Option(..., "--predictions", exists=True, readable=True),
+    flipped_predictions: Path = typer.Option(
+        ...,
+        "--flipped-predictions",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    confidence_margin: float = typer.Option(0.0, "--confidence-margin", min=0.0),
+) -> None:
+    report = evaluate_sciimpact_flip_consistency(
+        sft,
+        predictions,
+        flipped_predictions,
+        output,
+        limit=limit,
+        confidence_margin=confidence_margin,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote SciImpact flip-consistency evaluation to "
+        f"{output} (selected_accuracy={summary['selected_accuracy']:.3f}, "
+        f"consistency_rate={summary['consistency_rate']:.3f})"
+    )
+
+
+@app.command("evaluate-sciimpact-index")
+def evaluate_sciimpact_index_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    predictions: Path = typer.Option(..., "--predictions", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    report = write_sciimpact_index_evaluation(sft, predictions, output)
+    summary = report["pairwise_evaluation"]["summary"]
+    typer.echo(
+        "Wrote SciImpact index evaluation to "
+        f"{output} (pairwise_accuracy={summary['pairwise_accuracy']:.3f}, "
+        f"coverage_rate={summary['coverage_rate']:.3f})"
+    )
+
+
+@app.command("export-sciimpact-pairwise-sft")
+def export_sciimpact_pairwise_sft_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
+    prompt_style: str = typer.Option(
+        "generic-impact",
+        "--prompt-style",
+        help="Training prompt style: generic-impact or source-task.",
+    ),
+) -> None:
+    manifest = export_sciimpact_pairwise_sft(
+        input,
+        output,
+        limit=limit,
+        skip_invalid=not strict,
+        prompt_style=prompt_style.replace("-", "_"),
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['record_count']} SciImpact pairwise SFT records to {output} "
+        f"(skipped={manifest['skipped_record_count']})"
+    )
+
+
+@app.command("export-sciimpact-pairwise-dpo")
+def export_sciimpact_pairwise_dpo_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
+) -> None:
+    manifest = export_sciimpact_pairwise_dpo(
+        input,
+        output,
+        limit=limit,
+        skip_invalid=not strict,
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['record_count']} SciImpact pairwise DPO records to {output} "
+        f"(skipped={manifest['skipped_record_count']})"
+    )
+
+
+@app.command("mine-sciimpact-hard-examples")
+def mine_sciimpact_hard_examples_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    flip_rows: Path = typer.Option(..., "--flip-rows", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_examples: int | None = typer.Option(None, "--max-examples", min=1),
+    include_wrong: bool = typer.Option(True, "--include-wrong/--exclude-wrong"),
+    include_inconsistent: bool = typer.Option(
+        True,
+        "--include-inconsistent/--exclude-inconsistent",
+    ),
+    strict: bool = typer.Option(False, "--strict/--skip-invalid"),
+) -> None:
+    manifest = mine_sciimpact_hard_pairwise_examples(
+        sft,
+        flip_rows,
+        output,
+        max_examples=max_examples,
+        include_wrong=include_wrong,
+        include_inconsistent=include_inconsistent,
+        skip_invalid=not strict,
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['record_count']} SciImpact hard pairwise examples to {output} "
+        f"(skipped={manifest['skipped_record_count']})"
+    )
+
+
+@app.command("export-sciimpact-pairwise-sft-lora-config")
+def export_sciimpact_pairwise_sft_lora_config_cmd(
+    train_file: Path = typer.Option(..., "--train-file", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    model_name_or_path: str = typer.Option(..., "--model-name-or-path"),
+    checkpoint_output: Path = typer.Option(..., "--checkpoint-output"),
+    max_samples: int | None = typer.Option(None, "--max-samples", min=1),
+) -> None:
+    manifest = export_sciimpact_pairwise_sft_llamafactory_configs(
+        train_file,
+        output,
+        model_name_or_path=model_name_or_path,
+        output_dir=checkpoint_output,
+        max_samples=max_samples,
+    )
+    typer.echo(
+        "Wrote SciImpact pairwise SFT LoRA config to "
+        f"{manifest['train_config_path']}"
+    )
+
+
+@app.command("sample-sciimpact-sft")
+def sample_sciimpact_sft_cmd(
+    sft: Path = typer.Option(..., "--sft", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    per_dimension: int = typer.Option(100, "--per-dimension", min=1),
+    seed: int = typer.Option(0, "--seed"),
+    dimension: list[str] | None = typer.Option(None, "--dimension"),
+    dimension_weight: list[str] | None = typer.Option(None, "--dimension-weight"),
+    item_type_weight: list[str] | None = typer.Option(None, "--item-type-weight"),
+) -> None:
+    manifest = write_sciimpact_stratified_sample(
+        sft,
+        output,
+        per_dimension=per_dimension,
+        seed=seed,
+        dimensions=dimension,
+        dimension_weights=_parse_dimension_weights(dimension_weight or []),
+        item_type_weights=_parse_item_type_weights(item_type_weight or []),
+    )
+    typer.echo(
+        "Wrote "
+        f"{manifest['sample_count']} stratified SciImpact examples to {output}"
+    )
+
+
+def _parse_dimension_weights(items: list[str]) -> dict[str, int]:
+    weights: dict[str, int] = {}
+    for item in items:
+        if "=" not in item:
+            raise typer.BadParameter(
+                "--dimension-weight must use DIMENSION=WEIGHT, for example patent=3"
+            )
+        dimension, raw_weight = item.split("=", 1)
+        try:
+            weight = int(raw_weight)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"Invalid dimension weight for {dimension}: {raw_weight}"
+            ) from exc
+        if weight < 1:
+            raise typer.BadParameter("dimension weights must be positive integers")
+        weights[dimension] = weight
+    return weights
+
+
+def _parse_item_type_weights(items: list[str]) -> dict[str, int]:
+    weights: dict[str, int] = {}
+    for item in items:
+        if "=" not in item:
+            raise typer.BadParameter(
+                "--item-type-weight must use ITEM_TYPE=WEIGHT, for example github=3"
+            )
+        item_type, raw_weight = item.split("=", 1)
+        try:
+            weight = int(raw_weight)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"Invalid item type weight for {item_type}: {raw_weight}"
+            ) from exc
+        if weight < 1:
+            raise typer.BadParameter("item type weights must be positive integers")
+        weights[item_type] = weight
+    return weights
 
 
 @app.command("generate-sciimpact-predictions")
@@ -1104,6 +2355,8 @@ def generate_sciimpact_predictions_cmd(
     max_tokens: int | None = typer.Option(32, "--max-tokens", min=1),
     limit: int | None = typer.Option(None, "--limit", min=1),
     resume: bool = typer.Option(True, "--resume/--overwrite"),
+    concurrency: int = typer.Option(1, "--concurrency", min=1),
+    answer_format: str = typer.Option("freeform", "--answer-format"),
 ) -> None:
     manifest = generate_sciimpact_predictions(
         sft,
@@ -1116,6 +2369,8 @@ def generate_sciimpact_predictions_cmd(
         max_tokens=max_tokens,
         limit=limit,
         resume=resume,
+        concurrency=concurrency,
+        answer_format=answer_format,
     )
     typer.echo(
         "Wrote "
@@ -1175,11 +2430,25 @@ def _write_project_readiness_with_artifact_index(run_dir: Path) -> dict:
     return report
 
 
+def _impact_claim_default_output(run_dir: Path) -> Path:
+    if (run_dir / "reports").exists():
+        return run_dir / "reports"
+    return run_dir
+
+
 def _write_artifact_index(run_dir: Path) -> None:
     reports_dir = run_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     (reports_dir / "artifact_index.json").write_text(
-        json.dumps(artifact_index(run_dir, RUN_ARTIFACTS), indent=2) + "\n",
+        json.dumps(
+            artifact_index(
+                run_dir,
+                RUN_ARTIFACTS,
+                optional_paths=OPTIONAL_RUN_ARTIFACTS,
+            ),
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -1270,6 +2539,58 @@ def _render_finetuning_preflight_markdown(report: dict) -> str:
         f"| reverse_conflict_count | {validation.get('reverse_conflict_count', 0)} |",
         "",
     ]
+    return "\n".join(lines)
+
+
+def _load_tokenizer_for_inspection(model: str):
+    try:
+        from transformers import AutoTokenizer
+    except ModuleNotFoundError as exc:  # pragma: no cover - depends on training env.
+        raise typer.BadParameter(
+            "transformers is required for inspect-sft-tokenization"
+        ) from exc
+    tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+    if getattr(tokenizer, "pad_token", None) is None:
+        tokenizer.pad_token = getattr(tokenizer, "eos_token", None)
+    return tokenizer
+
+
+def _render_sft_tokenization_report_markdown(report: dict) -> str:
+    summary = report.get("summary", {})
+    lines = [
+        "# SFT Tokenization Report",
+        "",
+        "## Summary",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| loaded_example_count | {summary.get('loaded_example_count', 0)} |",
+        f"| inspected_example_count | {summary.get('inspected_example_count', 0)} |",
+        f"| truncated_example_count | {summary.get('truncated_example_count', 0)} |",
+        f"| truncated_example_rate | {summary.get('truncated_example_rate', 0.0):.6f} |",
+        f"| mean_prompt_retention_rate | {summary.get('mean_prompt_retention_rate', 0.0):.6f} |",
+        f"| prefix_retained_rate | {summary.get('prefix_retained_rate', 0.0):.6f} |",
+        f"| suffix_retained_rate | {summary.get('suffix_retained_rate', 0.0):.6f} |",
+        f"| response_fully_retained_rate | {summary.get('response_fully_retained_rate', 0.0):.6f} |",
+        "",
+        "## Example Preview",
+        "",
+        "| # | Prompt tokens | Response tokens | Retained prompt | Truncated | Prefix | Suffix | Response |",
+        "| ---: | ---: | ---: | ---: | --- | --- | --- | --- |",
+    ]
+    for row in report.get("examples", []):
+        lines.append(
+            "| "
+            f"{row.get('example_index')} | "
+            f"{row.get('prompt_token_count')} | "
+            f"{row.get('response_token_count')} | "
+            f"{row.get('retained_prompt_token_count')} | "
+            f"{_yes_no_bool(row.get('truncated'))} | "
+            f"{_yes_no_bool(row.get('prefix_retained'))} | "
+            f"{_yes_no_bool(row.get('suffix_retained'))} | "
+            f"{_yes_no_bool(row.get('response_fully_retained'))} |"
+        )
+    lines.append("")
     return "\n".join(lines)
 
 

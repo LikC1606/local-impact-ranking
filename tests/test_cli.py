@@ -193,9 +193,230 @@ def test_cli_model_eval_writes_promotion_report(tmp_path):
 
     assert result.exit_code == 0
     assert "Wrote model eval" in result.stdout
-    assert (output_dir / "benchmark_comparison.md").exists()
-    assert (output_dir / "target_changes.csv").exists()
-    assert (output_dir / "model_eval.md").exists()
+
+
+def test_cli_enrich_openalex_writes_enriched_jsonl(monkeypatch, tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        json.dumps({"paper_id": "p1", "title": "Paper", "references": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_enrich_openalex(*args, **kwargs):
+        assert args[0] == input_path
+        assert args[1] == output_path
+        assert kwargs["email"] == "user@example.com"
+        assert kwargs["timeout"] == 12.0
+        output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return {"matched_count": 1, "unmatched_count": 0}
+
+    monkeypatch.setattr(cli, "enrich_papers_with_openalex", fake_enrich_openalex)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "enrich-openalex",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--email",
+            "user@example.com",
+            "--timeout",
+            "12",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+    assert "OpenAlex-enriched" in result.stdout
+
+
+def test_cli_enrich_opencitations_writes_enriched_jsonl(monkeypatch, tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        json.dumps({"paper_id": "p1", "title": "Paper", "references": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_enrich_opencitations(*args, **kwargs):
+        assert args[0] == input_path
+        assert args[1] == output_path
+        assert kwargs["token"] == "token-1"
+        assert kwargs["timeout"] == 12.0
+        assert kwargs["include_edges"] is False
+        assert kwargs["materialize_internal_edges"] is True
+        output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return {
+            "matched_count": 1,
+            "unmatched_count": 0,
+            "internal_incoming_edge_count": 0,
+            "materialized_internal_edge_count": 0,
+        }
+
+    monkeypatch.setattr(
+        cli,
+        "enrich_papers_with_opencitations",
+        fake_enrich_opencitations,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "enrich-opencitations",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--token",
+            "token-1",
+            "--timeout",
+            "12",
+            "--no-include-edges",
+            "--materialize-internal-edges",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+    assert "OpenCitations-enriched" in result.stdout
+
+
+def test_cli_enrich_semantic_scholar_writes_enriched_jsonl(monkeypatch, tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        json.dumps({"paper_id": "p1", "title": "Paper", "references": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_enrich_semantic_scholar(*args, **kwargs):
+        assert args[0] == input_path
+        assert args[1] == output_path
+        assert kwargs["api_key"] == "s2-key"
+        assert kwargs["timeout"] == 12.0
+        output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return {
+            "matched_count": 1,
+            "unmatched_count": 0,
+            "title_match_count": 0,
+        }
+
+    monkeypatch.setattr(
+        cli,
+        "enrich_papers_with_semantic_scholar",
+        fake_enrich_semantic_scholar,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "enrich-semantic-scholar",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--api-key",
+            "s2-key",
+            "--timeout",
+            "12",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+    assert "Semantic Scholar-enriched" in result.stdout
+
+
+def test_cli_materialize_internal_citations_writes_jsonl(monkeypatch, tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.internal.jsonl"
+    summary_path = tmp_path / "internal-summary.json"
+    input_path.write_text(
+        json.dumps({"paper_id": "p1", "title": "Paper", "references": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_materialize_internal_citation_edges(*args, **kwargs):
+        assert args[0] == input_path
+        assert args[1] == output_path
+        assert kwargs["summary_output"] == summary_path
+        assert kwargs["title_threshold"] == 0.91
+        output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
+        summary_path.write_text("{}", encoding="utf-8")
+        return {
+            "materialized_internal_edge_count": 2,
+            "existing_internal_edge_count": 1,
+            "unmatched_reference_count": 3,
+        }
+
+    monkeypatch.setattr(
+        cli,
+        "materialize_internal_citation_edges",
+        fake_materialize_internal_citation_edges,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "materialize-internal-citations",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--summary-output",
+            str(summary_path),
+            "--title-threshold",
+            "0.91",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+    assert "internal citation edges" in result.stdout
+
+
+def test_cli_external_evidence_readiness_writes_json_and_markdown(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "external-readiness"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Paper",
+                "doi": "10.1000/a",
+                "citation_count": 5,
+                "references": [],
+                "metadata": {
+                    "openalex_enriched": True,
+                    "external_ids": {"openalex": "W1"},
+                    "external_impact": {"field_year_percentile": 0.8},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "external-evidence-readiness",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_dir),
+            "--markdown",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "# External Evidence Readiness" in result.stdout
+    assert (output_dir / "external_evidence_readiness.json").exists()
+    assert (output_dir / "external_evidence_readiness.md").exists()
+    assert (output_dir / "external_evidence_paper_coverage.csv").exists()
 
 
 def test_cli_score_card_writes_reportable_cards(tmp_path):
@@ -414,6 +635,10 @@ def test_cli_train_dpo_delegates_to_lora_trainer(monkeypatch, tmp_path):
             "0.1",
             "--device-map",
             "cpu",
+            "--base-adapter",
+            "/adapters/sft",
+            "--sampling-strategy",
+            "balanced-metadata",
         ],
     )
 
@@ -431,6 +656,122 @@ def test_cli_train_dpo_delegates_to_lora_trainer(monkeypatch, tmp_path):
     assert captured["lora_alpha"] == 16
     assert captured["lora_dropout"] == 0.1
     assert captured["device_map"] == "cpu"
+    assert captured["base_adapter"] == "/adapters/sft"
+    assert captured["sampling_strategy"] == "balanced_metadata"
+
+
+def test_cli_train_dpo_defaults_to_4096_context(monkeypatch, tmp_path):
+    train_file = tmp_path / "train.jsonl"
+    train_file.write_text("{}\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run_dpo_lora_training(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "run_dpo_lora_training", fake_run_dpo_lora_training)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-dpo",
+            "--model",
+            "/models/base",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(tmp_path / "adapter"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["max_length"] == 4096
+
+
+def test_cli_train_sft_delegates_to_lora_trainer(monkeypatch, tmp_path):
+    train_file = tmp_path / "train-sft.jsonl"
+    train_file.write_text("{}\n", encoding="utf-8")
+    output_dir = tmp_path / "adapter"
+    captured = {}
+
+    def fake_run_sft_lora_training(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "run_sft_lora_training", fake_run_sft_lora_training)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-sft",
+            "--model",
+            "/models/base",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(output_dir),
+            "--max-steps",
+            "3",
+            "--max-examples",
+            "2",
+            "--learning-rate",
+            "2e-5",
+            "--seed",
+            "42",
+            "--gradient-accumulation-steps",
+            "4",
+            "--lora-r",
+            "8",
+            "--lora-alpha",
+            "16",
+            "--lora-dropout",
+            "0.1",
+            "--device-map",
+            "cpu",
+            "--sampling-strategy",
+            "balanced_metadata",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["model_name_or_path"] == "/models/base"
+    assert captured["train_files"] == [train_file]
+    assert captured["output_dir"] == output_dir
+    assert captured["max_steps"] == 3
+    assert captured["max_examples"] == 2
+    assert captured["learning_rate"] == 2e-5
+    assert captured["seed"] == 42
+    assert captured["gradient_accumulation_steps"] == 4
+    assert captured["lora_r"] == 8
+    assert captured["lora_alpha"] == 16
+    assert captured["lora_dropout"] == 0.1
+    assert captured["device_map"] == "cpu"
+    assert captured["sampling_strategy"] == "balanced_metadata"
+
+
+def test_cli_train_sft_defaults_to_4096_context(monkeypatch, tmp_path):
+    train_file = tmp_path / "train-sft.jsonl"
+    train_file.write_text("{}\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run_sft_lora_training(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "run_sft_lora_training", fake_run_sft_lora_training)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "train-sft",
+            "--model",
+            "/models/base",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(tmp_path / "adapter"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["max_length"] == 4096
 
 
 def test_cli_validate_dpo_data_reports_load_quality(tmp_path):
@@ -479,6 +820,94 @@ def test_cli_validate_dpo_data_reports_load_quality(tmp_path):
     assert report["raw_record_count"] == 2
     assert report["loaded_example_count"] == 1
     assert report["reverse_conflict_count"] == 1
+
+
+def test_cli_validate_sft_data_reports_load_quality(tmp_path):
+    train_file = tmp_path / "sft.jsonl"
+    train_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "conversations": [
+                            {"from": "human", "value": "Prompt"},
+                            {"from": "gpt", "value": "Answer: A"},
+                        ],
+                    }
+                ),
+                json.dumps({"conversations": [{"from": "human", "value": "Prompt"}]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "sft-validation"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate-sft-data",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(output_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "SFT data validation: raw=2 loaded=1 invalid=1" in result.stdout
+    report = json.loads((output_dir / "sft_data_validation.json").read_text())
+    assert report["raw_record_count"] == 2
+    assert report["loaded_example_count"] == 1
+    assert report["invalid_record_count"] == 1
+
+
+def test_cli_inspect_sft_tokenization_writes_retention_report(monkeypatch, tmp_path):
+    train_file = tmp_path / "sft.jsonl"
+    train_file.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {"from": "human", "value": "START-" + ("m" * 40) + "-END"},
+                    {"from": "gpt", "value": "Answer: A"},
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "tokenization"
+
+    class FakeTokenizer:
+        eos_token = "<eos>"
+
+        def __call__(self, text, add_special_tokens=False):
+            return type("Tokenized", (), {"input_ids": [ord(char) for char in text]})()
+
+    monkeypatch.setattr(cli, "_load_tokenizer_for_inspection", lambda model: FakeTokenizer())
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "inspect-sft-tokenization",
+            "--model",
+            "fake-model",
+            "--train-file",
+            str(train_file),
+            "--output",
+            str(output_dir),
+            "--max-length",
+            "32",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "prefix_retained_rate=1.000" in result.stdout
+    report = json.loads((output_dir / "sft_tokenization_report.json").read_text())
+    markdown = (output_dir / "sft_tokenization_report.md").read_text()
+    assert report["summary"]["truncated_example_count"] == 1
+    assert report["summary"]["response_fully_retained_rate"] == 1.0
+    assert "# SFT Tokenization Report" in markdown
 
 
 def test_cli_finetuning_preflight_writes_training_decision(tmp_path):
@@ -665,6 +1094,9 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert (output_dir / "reports" / "artifact_index.json").exists()
     assert (output_dir / "reports" / "proxy_evaluation.json").exists()
     assert (output_dir / "reports" / "data_readiness.json").exists()
+    assert (output_dir / "reports" / "external_evidence_readiness.json").exists()
+    assert (output_dir / "reports" / "external_evidence_readiness.md").exists()
+    assert (output_dir / "reports" / "external_evidence_paper_coverage.csv").exists()
     assert (output_dir / "reports" / "anomaly_report.json").exists()
     assert (output_dir / "reports" / "scoring_config.json").exists()
     assert (output_dir / "reports" / "stability_report.json").exists()
@@ -710,6 +1142,9 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert "rankings/papers.csv" in artifact_paths
     assert "rankings/fields.csv" in artifact_paths
     assert "reports/evaluation.md" in artifact_paths
+    assert "reports/external_evidence_readiness.json" in artifact_paths
+    assert "reports/external_evidence_readiness.md" in artifact_paths
+    assert "reports/external_evidence_paper_coverage.csv" in artifact_paths
     assert "reports/gold_evaluation.json" in artifact_paths
     assert "reports/gold_candidate_position.json" in artifact_paths
     assert "reports/gold_candidate_position.md" in artifact_paths

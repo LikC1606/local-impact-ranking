@@ -1,0 +1,85 @@
+{
+  "profile": {
+    "name": "local-impact-judge-source-task-dpo",
+    "source_benchmark": "SciImpact",
+    "source_model": "local-impact-judge-source-task-dpo",
+    "source_base_model": "deepseek-r1-distill-qwen-32b",
+    "source_adapter": "qwen32b-source-task-sft16k4096-dpo16k1024-128step",
+    "source_run": "runs/sciimpact-source-task-sft-dpo/eval/source-task-dpo-three-seed-model-credibility",
+    "created_date": "2026-05-31",
+    "scope": "Cross-seed SciImpact A/B credibility evidence for the recommended local pairwise impact judge.",
+    "limitations": "This is benchmark support for local pairwise impact judgments, not proof of global scientific impact or high-credibility standalone model authority."
+  },
+  "summary": {
+    "evaluation_count": 3,
+    "total_examples": 900,
+    "covered_examples": 900,
+    "correct_examples": 593,
+    "pooled_accuracy": 0.658889,
+    "mean_accuracy": 0.658889,
+    "min_accuracy": 0.646667,
+    "max_accuracy": 0.68,
+    "accuracy_range": 0.033333,
+    "mean_coverage_rate": 1.0,
+    "min_coverage_rate": 1.0
+  },
+  "pooled_statistical_significance": {
+    "status": "statistically_supported",
+    "tested_metric": "accuracy",
+    "successes": 593,
+    "trials": 900,
+    "observed": 0.658889,
+    "wilson_ci95": [0.627299, 0.689128],
+    "p_value": 0.0,
+    "significant_vs_random": true,
+    "reason": "SciImpact A/B accuracy is significantly above a random 0.5 baseline."
+  },
+  "credibility_scorecard": {
+    "status": "moderate_credibility",
+    "grade": "B",
+    "can_claim_high_model_credibility": false,
+    "reason": "Cross-seed SciImpact model evidence is supported, with warnings to disclose.",
+    "warnings": [
+      "At least one seed is weaker than the high-credibility threshold.",
+      "At least one eligible slice is weak across seeds."
+    ]
+  },
+  "weak_slices": [
+    {
+      "slice": "item_type:dataset",
+      "pooled_accuracy": 0.569231,
+      "min_seed_accuracy": 0.52,
+      "covered_examples": 65
+    },
+    {
+      "slice": "dimension:stars",
+      "pooled_accuracy": 0.58,
+      "min_seed_accuracy": 0.52,
+      "covered_examples": 150
+    },
+    {
+      "slice": "item_type:github_repo",
+      "pooled_accuracy": 0.58,
+      "min_seed_accuracy": 0.52,
+      "covered_examples": 150
+    },
+    {
+      "slice": "item_type:model",
+      "pooled_accuracy": 0.635294,
+      "min_seed_accuracy": 0.548387,
+      "covered_examples": 85
+    },
+    {
+      "slice": "dimension:downloads",
+      "pooled_accuracy": 0.606667,
+      "min_seed_accuracy": 0.56,
+      "covered_examples": 150
+    },
+    {
+      "slice": "dimension:patent",
+      "pooled_accuracy": 0.626667,
+      "min_seed_accuracy": 0.56,
+      "covered_examples": 150
+    }
+  ]
+}

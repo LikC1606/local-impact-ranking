@@ -54,6 +54,29 @@ def _write_minimal_reportable_run(run_dir):
         },
     )
     _write_json(
+        run_dir / "reports" / "external_evidence_readiness.json",
+        {
+            "decision": {
+                "status": "ready_for_high_credibility_scoring",
+                "can_claim_high_credibility": True,
+                "reason": "External evidence coverage is strong.",
+            },
+            "identifier_coverage": {"external_query_id_coverage": 0.9},
+            "source_coverage": {
+                "openalex_enriched_coverage": 0.8,
+                "opencitations_enriched_coverage": 0.8,
+            },
+            "signal_coverage": {
+                "citation_count_coverage": 0.9,
+                "field_year_percentile_coverage": 0.8,
+            },
+            "graph_evidence": {
+                "internal_reference_edge_count": 5,
+                "materialized_internal_edge_count": 2,
+            },
+        },
+    )
+    _write_json(
         run_dir / "reports" / "proxy_evaluation.json",
         {
             "selected_references": 20,
@@ -132,6 +155,53 @@ def _write_minimal_reportable_run(run_dir):
         },
     )
     _write_json(
+        run_dir / "reports" / "impact_validity_evaluation.json",
+        {
+            "summary": {
+                "matched_paper_count": 100,
+                "ranking_paper_count": 100,
+                "label_paper_count": 100,
+                "score_label_match_rate": 1.0,
+                "label_match_rate": 1.0,
+                "spearman_correlation": 0.52,
+                "kendall_tau_b": 0.39,
+                "pairwise_accuracy": 0.68,
+                "ndcg_at_top_k": 0.81,
+                "top_k_precision": 0.7,
+                "decision": {
+                    "status": "externally_supported",
+                    "reason": "Scores align with future labels.",
+                },
+            },
+            "statistical_significance": {
+                "status": "statistically_supported",
+                "significant_vs_random": True,
+                "tested_metric": "pairwise_accuracy",
+                "p_value": 0.01,
+            },
+        },
+    )
+    _write_json(
+        run_dir / "reports" / "citation_cutoff_audit.json",
+        {
+            "summary": {
+                "paper_count": 100,
+                "cutoff_year": 2022,
+                "papers_with_future_years": 0,
+                "future_year_count": 0,
+                "citation_cutoff_year_coverage": 1.0,
+            },
+            "decision": {
+                "status": "passed",
+                "reason": "No future-year citation leakage was found.",
+            },
+        },
+    )
+    (run_dir / "reports" / "citation_cutoff_audit.md").write_text(
+        "# Citation Cutoff Audit\n",
+        encoding="utf-8",
+    )
+    _write_json(
         run_dir / "finetuning" / "finetuning_preflight.json",
         {
             "decision": {
@@ -199,6 +269,14 @@ def test_project_readiness_report_marks_reportable_run(tmp_path):
     assert report["quality"]["evidence_level"] == "gold_validated"
     assert report["quality"]["gold_candidate_position"]["position_bias_risk"] == "low"
     assert report["quality"]["gold_baseline_comparison"]["judge_beats_all_baselines"] is True
+    assert report["quality"]["external_evidence"]["status"] == "ready_for_high_credibility_scoring"
+    assert report["quality"]["external_evidence"]["can_claim_high_credibility"] is True
+    assert report["quality"]["impact_validity"]["status"] == "externally_supported"
+    assert report["quality"]["impact_validity"]["spearman_correlation"] == 0.52
+    assert report["quality"]["impact_validity"]["significant_vs_random"] is True
+    assert report["quality"]["impact_validity"]["p_value"] == 0.01
+    assert report["quality"]["citation_cutoff_audit"]["status"] == "passed"
+    assert report["quality"]["citation_cutoff_audit"]["future_year_count"] == 0
     assert report["quality"]["gold_baseline_comparison"]["mean_ndcg_delta"] == 0.2
     assert report["quality"]["gold_baseline_comparison"]["mean_ndcg_delta_ci95"] == [0.05, 0.3]
     assert report["quality"]["gold_baseline_comparison"]["statistically_positive_ndcg_delta"] is True
@@ -210,12 +288,20 @@ def test_project_readiness_report_marks_reportable_run(tmp_path):
     assert report["evidence_files"]["paper_ranking"] == "rankings/papers.csv"
     assert report["evidence_files"]["gold_candidate_position"] == "reports/gold_candidate_position.json"
     assert report["evidence_files"]["gold_baseline_comparison"] == "reports/gold_baseline_comparison.json"
+    assert report["evidence_files"]["external_evidence_readiness"] == "reports/external_evidence_readiness.json"
+    assert report["evidence_files"]["external_evidence_paper_coverage"] == "reports/external_evidence_paper_coverage.csv"
+    assert report["evidence_files"]["impact_validity_evaluation"] == "reports/impact_validity_evaluation.json"
+    assert report["evidence_files"]["citation_cutoff_audit"] == "reports/citation_cutoff_audit.json"
 
 
 def test_project_readiness_required_artifacts_exclude_self_outputs_only():
     required = required_artifacts_for_readiness()
 
     assert "reports/artifact_index.json" in required
+    assert "reports/impact_validity_evaluation.json" not in required
+    assert "reports/impact_validity_evaluation.md" not in required
+    assert "reports/citation_cutoff_audit.json" not in required
+    assert "reports/citation_cutoff_audit.md" not in required
     assert "reports/project_readiness.json" not in required
     assert "reports/project_readiness.md" not in required
 
@@ -265,6 +351,210 @@ def test_project_readiness_report_warns_when_gold_labels_are_absent(tmp_path):
     assert "proxy_support_reasonable" in report["warning_checks"]
     assert report["quality"]["evidence_level"] == "proxy_only_needs_review"
     assert report["recommended_next_actions"][0].startswith("Add benchmark gold labels")
+
+
+def test_project_readiness_warns_when_external_evidence_is_not_high_credibility(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "external_evidence_readiness.json",
+        {
+            "decision": {
+                "status": "usable_with_disclosure",
+                "can_claim_high_credibility": False,
+                "reason": "External evidence is usable but incomplete.",
+            },
+            "identifier_coverage": {"external_query_id_coverage": 0.45},
+            "source_coverage": {
+                "openalex_enriched_coverage": 0.2,
+                "opencitations_enriched_coverage": 0.1,
+            },
+            "signal_coverage": {
+                "citation_count_coverage": 0.4,
+                "field_year_percentile_coverage": 0.1,
+            },
+            "graph_evidence": {
+                "internal_reference_edge_count": 0,
+                "materialized_internal_edge_count": 0,
+            },
+        },
+    )
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "needs_improvement"
+    assert report["decision"]["can_report"] is True
+    assert "external_evidence_ready_for_high_credibility" in report["warning_checks"]
+    assert report["quality"]["external_evidence"]["status"] == "usable_with_disclosure"
+    assert report["quality"]["external_evidence"]["external_query_id_coverage"] == 0.45
+    assert any("External evidence coverage" in warning for warning in report["warnings"])
+    assert any("Run enrich-openalex" in action for action in report["recommended_next_actions"])
+
+
+def test_project_readiness_warns_when_impact_validity_lacks_cutoff_audit(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    (tmp_path / "reports" / "citation_cutoff_audit.json").unlink()
+    (tmp_path / "reports" / "citation_cutoff_audit.md").unlink()
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "needs_improvement"
+    assert "citation_cutoff_audit_available_for_impact_validity" in report["warning_checks"]
+    assert report["quality"]["citation_cutoff_audit"]["status"] == "not_available"
+    assert any("citation cutoff audit" in warning.lower() for warning in report["warnings"])
+    assert any("audit-citation-cutoff" in action for action in report["recommended_next_actions"])
+
+
+def test_project_readiness_blocks_failed_cutoff_audit_for_impact_validity(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "citation_cutoff_audit.json",
+        {
+            "summary": {
+                "paper_count": 100,
+                "cutoff_year": 2022,
+                "papers_with_future_years": 3,
+                "future_year_count": 8,
+                "citation_cutoff_year_coverage": 1.0,
+            },
+            "decision": {
+                "status": "failed",
+                "reason": "Citation histories contain years after the requested cutoff.",
+            },
+        },
+    )
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "blocked"
+    assert "citation_cutoff_audit_no_future_leakage" in report["failed_checks"]
+    assert report["quality"]["citation_cutoff_audit"]["status"] == "failed"
+    assert report["quality"]["citation_cutoff_audit"]["future_year_count"] == 8
+    assert any("post-cutoff" in blocker for blocker in report["blockers"])
+
+
+def test_project_readiness_warns_when_impact_validity_is_not_statistically_supported(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "impact_validity_evaluation.json",
+        {
+            "summary": {
+                "matched_paper_count": 100,
+                "ranking_paper_count": 100,
+                "label_paper_count": 100,
+                "score_label_match_rate": 1.0,
+                "label_match_rate": 1.0,
+                "spearman_correlation": 0.08,
+                "kendall_tau_b": 0.04,
+                "pairwise_accuracy": 0.51,
+                "ndcg_at_top_k": 0.55,
+                "top_k_precision": 0.2,
+                "decision": {
+                    "status": "not_validated",
+                    "reason": "Point metrics are not statistically supported.",
+                },
+            },
+            "statistical_significance": {
+                "status": "not_statistically_supported",
+                "significant_vs_random": False,
+                "tested_metric": "pairwise_accuracy",
+                "p_value": 0.62,
+            },
+        },
+    )
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "needs_improvement"
+    assert "impact_validity_statistically_supported" in report["warning_checks"]
+    assert report["quality"]["impact_validity"]["status"] == "not_validated"
+    assert report["quality"]["impact_validity"]["significant_vs_random"] is False
+    assert any("random baseline" in warning.lower() for warning in report["warnings"])
+    assert any("not claim validated impact accuracy" in action for action in report["recommended_next_actions"])
+
+
+def test_project_readiness_warns_when_impact_validity_match_coverage_is_low(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "impact_validity_evaluation.json",
+        {
+            "summary": {
+                "matched_paper_count": 25,
+                "ranking_paper_count": 100,
+                "label_paper_count": 25,
+                "score_label_match_rate": 0.25,
+                "label_match_rate": 1.0,
+                "spearman_correlation": 0.9,
+                "kendall_tau_b": 0.8,
+                "pairwise_accuracy": 0.9,
+                "ndcg_at_top_k": 0.95,
+                "top_k_precision": 0.9,
+                "decision": {
+                    "status": "externally_supported",
+                    "reason": "Strong point metrics.",
+                },
+            },
+            "statistical_significance": {
+                "status": "statistically_supported",
+                "significant_vs_random": True,
+                "tested_metric": "pairwise_accuracy",
+                "p_value": 0.01,
+            },
+        },
+    )
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "needs_improvement"
+    assert "impact_validity_match_coverage_reasonable" in report["warning_checks"]
+    assert report["quality"]["impact_validity"]["score_label_match_rate"] == 0.25
+    assert any("coverage" in warning.lower() for warning in report["warnings"])
+    assert any("entity matching" in action.lower() for action in report["recommended_next_actions"])
+
+
+def test_project_readiness_warns_when_self_citation_risk_is_high(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    _write_json(
+        tmp_path / "reports" / "anomaly_report.json",
+        {
+            "missing_metadata": {
+                "references_missing_title_count": 0,
+                "references_missing_author_count": 0,
+                "references_missing_affiliation_count": 0,
+            },
+            "score_dominance": {
+                "paper_single_edge_dominance": [
+                    {"id": "r1", "max_single_edge_share": 0.3}
+                ]
+            },
+            "self_citation_risk": {
+                "risk_level": "high",
+                "self_citation_edge_rate": 0.55,
+                "self_citation_credit_share": 0.62,
+            },
+        },
+    )
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "needs_improvement"
+    assert "self_citation_risk_not_high" in report["warning_checks"]
+    assert report["quality"]["anomaly"]["self_citation_risk_level"] == "high"
+    assert report["quality"]["anomaly"]["self_citation_credit_share"] == 0.62
+
+
+def test_project_readiness_does_not_require_cutoff_audit_without_impact_validity(tmp_path):
+    _write_minimal_reportable_run(tmp_path)
+    (tmp_path / "reports" / "impact_validity_evaluation.json").unlink()
+    (tmp_path / "reports" / "impact_validity_evaluation.md").unlink()
+    (tmp_path / "reports" / "citation_cutoff_audit.json").unlink()
+    (tmp_path / "reports" / "citation_cutoff_audit.md").unlink()
+
+    report = project_readiness_report(tmp_path)
+
+    assert report["decision"]["status"] == "reportable"
+    assert "citation_cutoff_audit_available_for_impact_validity" not in report["warning_checks"]
+    assert report["quality"]["impact_validity"]["status"] == "not_available"
+    assert report["quality"]["citation_cutoff_audit"]["status"] == "not_available"
 
 
 def test_project_readiness_accepts_proxy_evidence_when_gold_labels_are_absent(tmp_path):
@@ -332,7 +622,17 @@ def test_render_project_readiness_markdown_contains_decision_and_claim_boundary(
     assert "| claim_scope | dataset-local content-aware impact ranking |" in markdown
     assert "## Quality Signals" in markdown
     assert "| evidence_level | gold_validated |" in markdown
+    assert "| external_evidence_status | ready_for_high_credibility_scoring |" in markdown
+    assert "| impact_validity_status | externally_supported |" in markdown
+    assert "| impact_validity_match_rate | 1.000 |" in markdown
+    assert "| impact_validity_significant_vs_random | yes |" in markdown
+    assert "| impact_validity_p_value | 0.010 |" in markdown
+    assert "| citation_cutoff_audit_status | passed |" in markdown
+    assert "| citation_cutoff_future_year_count | 0 |" in markdown
+    assert "| external_query_id_coverage | 0.900 |" in markdown
     assert "## Reproducibility" in markdown
     assert "| input_sha256 | input-sha |" in markdown
     assert "| judge_model | local-impact-judge |" in markdown
     assert "## Evidence Files" in markdown
+    assert "| external_evidence_paper_coverage | `reports/external_evidence_paper_coverage.csv` |" in markdown
+    assert "| citation_cutoff_audit | `reports/citation_cutoff_audit.json` |" in markdown

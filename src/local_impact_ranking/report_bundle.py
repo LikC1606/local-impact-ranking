@@ -17,6 +17,39 @@ REPORT_BUNDLE_FILES = [
     "reports/benchmark_summary.md",
     "reports/project_readiness.json",
     "reports/project_readiness.md",
+    "reports/external_evidence_readiness.json",
+    "reports/external_evidence_readiness.md",
+    "reports/external_evidence_paper_coverage.csv",
+    "reports/impact_validity_evaluation.json",
+    "reports/impact_validity_evaluation.md",
+    "reports/impact_credibility_scorecard.json",
+    "reports/impact_credibility_scorecard.md",
+    "reports/citation_cutoff_audit.json",
+    "reports/citation_cutoff_audit.md",
+    "reports/impact_claim_certificate.json",
+    "reports/impact_claim_certificate.md",
+    "impact_claim_certificate.json",
+    "impact_claim_certificate.md",
+    "model_credibility_card.json",
+    "model_credibility_card.md",
+    "calibration_profile_card.json",
+    "calibration_profile_card.md",
+    "impact_scores.csv",
+    "impact_scores.jsonl",
+    "model_impact_report.json",
+    "model_impact_report.md",
+    "impact_score_cards.json",
+    "impact_score_cards.md",
+    "pairwise_judgments.jsonl",
+    "direct_scores.csv",
+    "direct_scores.jsonl",
+    "external_evidence_readiness.json",
+    "external_evidence_readiness.md",
+    "external_evidence_paper_coverage.csv",
+    "impact_validity/impact_validity_evaluation.json",
+    "impact_validity/impact_validity_evaluation.md",
+    "impact_validity/impact_credibility_scorecard.json",
+    "impact_validity/impact_credibility_scorecard.md",
     "reports/evaluation.md",
     "reports/gold_evaluation.json",
     "reports/gold_evaluation.md",
@@ -53,13 +86,25 @@ def write_report_bundle(run_dir: str | Path, output_dir: str | Path) -> dict[str
 
     readiness = _read_json(source / "reports" / "project_readiness.json")
     benchmark = _read_json(source / "reports" / "benchmark_summary.json")
+    impact_claim = _impact_claim_summary(source)
+    model_score = _model_score_summary(source)
+    readiness_summary = _readiness_summary(readiness)
     manifest = {
         "run_dir": str(source),
         "claim_scope": readiness.get(
             "claim_scope",
             "dataset-local content-aware impact ranking",
         ),
-        "readiness": _readiness_summary(readiness),
+        "impact_claim": impact_claim,
+        "model_credibility": _model_credibility_summary(source),
+        "calibration_profile": _calibration_profile_summary(source),
+        "readiness": readiness_summary,
+        "model_score": model_score,
+        "bundle_decision": _display_decision(
+            readiness=readiness_summary,
+            impact_claim=impact_claim,
+            model_score=model_score,
+        ),
         "benchmark": _benchmark_summary(benchmark),
         "warnings": readiness.get("warnings", []),
         "copied_files": copied_files,
@@ -80,6 +125,14 @@ def write_report_bundle(run_dir: str | Path, output_dir: str | Path) -> dict[str
 def render_report_bundle_readme(manifest: dict[str, Any]) -> str:
     readiness = manifest.get("readiness", {})
     benchmark = manifest.get("benchmark", {})
+    model_score = manifest.get("model_score", {})
+    model_credibility = manifest.get("model_credibility", {})
+    calibration_profile = manifest.get("calibration_profile", {})
+    decision = manifest.get("bundle_decision") or _display_decision(
+        readiness=readiness,
+        impact_claim=manifest.get("impact_claim", {}),
+        model_score=model_score,
+    )
     lines = [
         "# Local Impact Ranking Report Bundle",
         "",
@@ -94,10 +147,14 @@ def render_report_bundle_readme(manifest: dict[str, Any]) -> str:
         "",
         "| Item | Value |",
         "| --- | --- |",
-        f"| readiness_status | {_text(readiness.get('status'))} |",
-        f"| can_report | {_yes_no(readiness.get('can_report'))} |",
-        f"| evidence_level | {_text(readiness.get('evidence_level'))} |",
-        f"| reason | {_text(readiness.get('reason'))} |",
+        f"| readiness_status | {_text(decision.get('status'))} |",
+        f"| can_report | {_yes_no(decision.get('can_report'))} |",
+        f"| evidence_level | {_text(decision.get('evidence_level'))} |",
+        f"| impact_claim_status | {_text(manifest.get('impact_claim', {}).get('status'))} |",
+        f"| validated_impact_accuracy | {_yes_no(manifest.get('impact_claim', {}).get('can_claim_validated_impact_accuracy'))} |",
+        f"| high_credibility_claim | {_yes_no(manifest.get('impact_claim', {}).get('can_claim_high_credibility'))} |",
+        f"| decision_basis | {_text(decision.get('basis'))} |",
+        f"| reason | {_text(decision.get('reason'))} |",
         "",
         "## Benchmark",
         "",
@@ -110,6 +167,45 @@ def render_report_bundle_readme(manifest: dict[str, Any]) -> str:
         f"| judge_ndcg_delta_ci95 | {_ci(benchmark.get('judge_ndcg_delta_ci95'))} |",
         f"| statistically_positive_ndcg_delta | {_yes_no(benchmark.get('statistically_positive_ndcg_delta'))} |",
         f"| needs_prompt_or_model_tuning | {_yes_no(benchmark.get('needs_prompt_or_model_tuning'))} |",
+        "",
+        "## Model Score Dataset",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| model_paper_count | {model_score.get('paper_count', 0)} |",
+        f"| judgment_count | {model_score.get('judgment_count', 0)} |",
+        f"| parseable_rate | {_number(model_score.get('parseable_rate'))} |",
+        f"| model_scoring_method | {_text(model_score.get('scoring_method'))} |",
+        f"| ranking_quality_status | {_text(model_score.get('ranking_quality_status'))} |",
+        f"| validated_impact_claim_status | {_text(model_score.get('validated_impact_claim_status'))} |",
+        f"| impact_credibility_status | {_text(model_score.get('impact_credibility_status'))} |",
+        "",
+        "## Model Credibility",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| model_credibility_status | {_text(model_credibility.get('status'))} |",
+        f"| model_credibility_grade | {_text(model_credibility.get('grade'))} |",
+        f"| served_model | {_text(model_credibility.get('served_model'))} |",
+        f"| model_identity_match | {_identity_match_text(model_credibility.get('model_identity_match'))} |",
+        f"| model_can_use_for_report_with_disclosure | {_yes_no(model_credibility.get('can_use_for_report_with_disclosure'))} |",
+        f"| model_can_claim_high_credibility | {_yes_no(model_credibility.get('can_claim_high_model_credibility'))} |",
+        f"| pooled_accuracy | {_number(model_credibility.get('pooled_accuracy'))} |",
+        f"| min_seed_accuracy | {_number(model_credibility.get('min_seed_accuracy'))} |",
+        f"| total_examples | {_text(model_credibility.get('total_examples'))} |",
+        "",
+        "## Calibration Profile",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| calibration_status | {_text(calibration_profile.get('status'))} |",
+        f"| served_model | {_text(calibration_profile.get('served_model'))} |",
+        f"| calibration_model_identity_match | {_identity_match_text(calibration_profile.get('model_identity_match'))} |",
+        f"| can_use_calibrated_confidence | {_yes_no(calibration_profile.get('can_use_calibrated_confidence'))} |",
+        f"| scored_examples | {_text(calibration_profile.get('scored_examples'))} |",
+        f"| ece | {_number(calibration_profile.get('ece'))} |",
+        f"| mce | {_number(calibration_profile.get('mce'))} |",
+        f"| brier_score | {_number(calibration_profile.get('brier_score'))} |",
         "",
         "## Included Files",
         "",
@@ -145,6 +241,120 @@ def _readiness_summary(readiness: dict[str, Any]) -> dict[str, Any]:
         "can_report": decision.get("can_report"),
         "reason": decision.get("reason"),
         "evidence_level": quality.get("evidence_level"),
+    }
+
+
+def _impact_claim_summary(source: Path) -> dict[str, Any]:
+    if (source / "model_impact_report.json").exists():
+        certificate = _read_json(source / "impact_claim_certificate.json")
+        if not certificate:
+            certificate = _read_json(source / "reports" / "impact_claim_certificate.json")
+    else:
+        certificate = _read_json(source / "reports" / "impact_claim_certificate.json")
+        if not certificate:
+            certificate = _read_json(source / "impact_claim_certificate.json")
+    claim = certificate.get("claim", {})
+    return {
+        "status": claim.get("status"),
+        "can_claim_validated_impact_accuracy": claim.get(
+            "can_claim_validated_impact_accuracy"
+        ),
+        "can_claim_high_credibility": claim.get("can_claim_high_credibility"),
+        "confidence": claim.get("confidence"),
+    }
+
+
+def _display_decision(
+    *,
+    readiness: dict[str, Any],
+    impact_claim: dict[str, Any],
+    model_score: dict[str, Any],
+) -> dict[str, Any]:
+    if int(model_score.get("paper_count", 0) or 0) > 0:
+        claim_status = impact_claim.get("status")
+        can_report = claim_status in {"validated", "evidence_supported"}
+        return {
+            "status": claim_status or model_score.get("ranking_quality_status"),
+            "can_report": can_report,
+            "evidence_level": "model_score_dataset",
+            "basis": "model_score_dataset",
+            "reason": (
+                "Model-score dataset decision uses the model-score impact claim "
+                "certificate rather than full-pipeline project readiness."
+            ),
+        }
+    return {
+        "status": readiness.get("status"),
+        "can_report": readiness.get("can_report"),
+        "evidence_level": readiness.get("evidence_level"),
+        "basis": "project_readiness",
+        "reason": readiness.get("reason"),
+    }
+
+
+def _model_credibility_summary(source: Path) -> dict[str, Any]:
+    card = _read_json(source / "model_credibility_card.json")
+    decision = card.get("decision", {})
+    summary = card.get("summary", {})
+    return {
+        "status": decision.get("status"),
+        "grade": decision.get("grade"),
+        "served_model": card.get("served_model"),
+        "model_identity_match": decision.get("model_identity_match"),
+        "profile_model_names": decision.get("profile_model_names", []),
+        "can_use_for_report_with_disclosure": decision.get(
+            "can_use_for_report_with_disclosure"
+        ),
+        "can_claim_high_model_credibility": decision.get(
+            "can_claim_high_model_credibility"
+        ),
+        "standalone_model_claim_allowed": decision.get(
+            "standalone_model_claim_allowed"
+        ),
+        "pooled_accuracy": summary.get("pooled_accuracy"),
+        "min_seed_accuracy": summary.get("min_seed_accuracy"),
+        "total_examples": summary.get("total_examples"),
+    }
+
+
+def _calibration_profile_summary(source: Path) -> dict[str, Any]:
+    card = _read_json(source / "calibration_profile_card.json")
+    decision = card.get("decision", {})
+    summary = card.get("summary", {})
+    return {
+        "status": decision.get("status"),
+        "served_model": card.get("served_model"),
+        "model_identity_match": decision.get("model_identity_match"),
+        "compatible_models": decision.get("compatible_models", []),
+        "can_use_calibrated_confidence": decision.get(
+            "can_use_calibrated_confidence"
+        ),
+        "quality_supported": decision.get("quality_supported"),
+        "scored_examples": summary.get("scored_examples"),
+        "ece": summary.get("ece"),
+        "mce": summary.get("mce"),
+        "brier_score": summary.get("brier_score"),
+    }
+
+
+def _model_score_summary(source: Path) -> dict[str, Any]:
+    report = _read_json(source / "model_impact_report.json")
+    validity = _read_json(source / "impact_validity" / "impact_validity_evaluation.json")
+    if not validity:
+        validity = _read_json(source / "reports" / "impact_validity_evaluation.json")
+    scorecard = validity.get("credibility_scorecard", {})
+    summary = report.get("summary", {})
+    ranking_quality = summary.get("ranking_quality", {})
+    validated_claim = summary.get("validated_impact_claim", {})
+    return {
+        "paper_count": summary.get("paper_count", 0),
+        "judgment_count": summary.get("judgment_count", 0),
+        "parseable_rate": summary.get("parseable_rate", 0.0),
+        "scoring_method": summary.get("scoring_method"),
+        "ranking_quality_status": ranking_quality.get("status"),
+        "validated_impact_claim_status": validated_claim.get("status"),
+        "impact_credibility_status": scorecard.get("status"),
+        "impact_credibility_grade": scorecard.get("grade"),
     }
 
 
@@ -196,6 +406,12 @@ def _ci(value: Any) -> str:
 
 def _yes_no(value: Any) -> str:
     return "yes" if bool(value) else "no"
+
+
+def _identity_match_text(value: Any) -> str:
+    if value is None:
+        return "not_checked"
+    return _yes_no(value)
 
 
 def _text(value: Any) -> str:

@@ -28,10 +28,10 @@ def validation_report(papers: list[Paper]) -> dict[str, Any]:
         if not paper.references:
             issues.append(
                 _issue(
-                    "error",
+                    "warning",
                     "empty_reference_list",
                     paper.paper_id,
-                    "paper has no candidate references",
+                    "paper has no candidate references; evidence coverage may be weaker",
                 )
             )
         if not paper.title:

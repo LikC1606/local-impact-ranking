@@ -1,100 +1,129 @@
 # 本地论文影响力评估系统汇报摘要
 
+更新日期：2026-06-01
+
 ## 1. 思路来源
 
-本项目不是从零自定义一个“影响力分数”，而是把已有影响力评估思路组合成一个可本地运行、可审计的系统。
+本项目的目标不是做一个不可解释的“影响力打分黑盒”，而是把公开文献中的影响力评估思想做成本地可运行、可审计、可交付的系统。
 
-核心来源：
+主要来源包括：
 
-- `ImpactRankings`：采用“先识别关键参考文献，再聚合到论文、作者、机构”的总体框架。
-- `Not all citations are equal`：说明引用不能简单等权，关键引用更能代表真实学术影响。
-- `Identifying Meaningful Citations`：支持区分 meaningful citation 和 incidental citation。
-- Content-aware bibliometrics：支持利用引用上下文、方法/数据/baseline 等语义线索给 citation edge 加权。
-- Citation graph ranking / BIP! DB / OpenCitations：提供 citation count、PageRank、field/year normalization 等传统 baseline。
+- `ImpactRankings` 的总体思路：先识别论文之间的关键影响关系，再聚合为论文、作者、机构等层级的影响力。
+- citation-context bibliometrics：引用不是等权的，方法、数据、baseline、复用类引用应比背景引用更重要。
+- citation graph ranking：PageRank、内部引用图、OpenCitations/BIP 类图证据可作为可审计的传统 baseline。
+- field/year normalization 和 RCR-like 思路：不同领域、年份的引用规模差异很大，必须做归一化，不能直接比较原始引用数。
+- SciImpact 类 benchmark：用成对影响力判断评估模型是否真的能区分更高影响力的对象。
 
-由于公开 `ImpactRankings` 仓库没有完整公开 prompt、候选构造、推理参数、匹配失败处理和评估协议，本项目不声称严格复现其结果，而是复现其核心方法思想，并补上本地数据、审计、评估和报告能力。
+由于公开 `ImpactRankings` 仓库没有完整公开 prompt、候选构造、推理参数、异常处理和评估协议，本项目不声称严格复现其结果；当前目标是复现其核心思想，并补上本地部署、证据融合、验证、报告和 claim boundary。
 
-## 2. 方法设计
+## 2. 系统设计
 
-系统目标是生成 **dataset-local** 影响力排名：只评价用户给定论文集合内部的相对影响力，不宣称全局真实影响力。
+系统输出的是 **dataset-local paper impact index**：只评价用户给定论文集合内部的相对影响力，不直接宣称全球科学影响力。
 
-主流程：
+当前主分数是 `impact_index_v3`，最终汇报分数是 `final_impact_score`。
 
-1. 输入论文数据，每篇论文包含自己的 references，可选 citation contexts。
-2. 对每篇目标论文，模型只能从其 references 中选择 top-k 关键参考文献。
-3. 将被选中的参考文献按 rank、上下文证据等规则计分。
-4. 将分数聚合到 paper、author、institution、field、year。
-5. 同时输出 citation count、PageRank、field/year-normalized citation baseline。
-6. 输出 validation、evaluation、proxy evaluation、anomaly、stability、manifest 和 audit 文件，支持复查和汇报。
+核心设计：
 
-当前支持三种评分模式：
+- 本地模型负责 pairwise 影响力判断，默认推荐模型名为 `local-impact-judge-source-task-dpo`。
+- 模型判断不是唯一依据，最终分数采用 evidence-first 融合。
+- 可用证据包括：模型 pairwise score、field/year citation score、RCR-like citation ratio、citation graph、citation context、influential citation、temporal momentum、外部 adoption/patent/policy/media/award/artifact 信号。
+- 每篇论文输出 `credible_evidence_tier`、`missing_high_value_evidence`、`reportability_status`、`validity_confidence` 和 claim certificate。
+- 用户入口会生成 `report_decision`，直接说明结果是 `report_with_disclosure`、`exploratory_only`、`validated_report` 还是 `blocked`。
+- 用户入口会生成 `model_credibility_card.md/json`，把当前模型的 SciImpact 跨 seed 证据、弱切片和可声明边界放进交付包；模型证据缺失、低可信或与实际 `MODEL` 不匹配时，`report_decision` 会降级为 `exploratory_only`。
+- 用户入口会生成 `calibration_profile_card.md/json`，把 calibrated confidence 的样本量、ECE/MCE/Brier、兼容模型和 `calibration_model_identity_match` 放进交付包；校准证据缺失、质量不足或与实际 `MODEL` 不匹配时，`report_decision` 也会降级为 `exploratory_only`。
 
-- `rank_weighted`：ImpactRankings-compatible 的 rank 权重。
-- `context_weighted`：在 rank 权重上加入引用上下文证据。
-- `flat`：每个有效选择等权，用于 ablation。
+## 3. 当前可交付入口
 
-## 3. 当前实现进展
-
-已实现命令：
-
-- `validate`：数据质量检查，输出 JSON 和 Markdown。
-- `convert-csv`：把 CSV 转成统一 JSONL 输入格式。
-- `judge`：可恢复的独立模型判断阶段，输出 `audit/judge_outputs.jsonl`。
-- `score`：从已有 judge audit 打分，不调用模型。
-- `run`：端到端运行。
-- `project-readiness`：汇总运行产物和质量门，判断 `reportable`、`needs_improvement` 或 `blocked`。
-- `benchmarks`：列出 benchmark 并支持 SciCite 转换。
-- `benchmarks convert-prescience`：把 PreScience JSONL/Parquet shard 转成项目 schema，并保留 gold positive reference IDs。
-
-已实现输出：
-
-- 排名：papers、authors、institutions、fields、years。
-- 审计：judge outputs、完整 prompts、scoring edge ledger。
-- 报告：validation、evaluation、gold evaluation、proxy evaluation、baseline comparison、data readiness、anomaly、stability、paper/entity explanations、MVP summary、project readiness。
-- 复现：run manifest、artifact index。
-- 微调准备：SFT、proxy-positive SFT、pairwise preference、DPO preference、LLaMAFactory config。
-
-已接入公开 benchmark：
-
-- PreScience adapter 已实现，可用于 key-reference selection gold evaluation。
-- SciCite train/dev/test 已转换成本地 schema。
-- SciImpact pairwise adapter 已实现，可把成对影响力标签转换为 `papers.jsonl` 和 `pairwise_labels.jsonl`，并用 `evaluate-pairwise-impact` 评估现有排名的 pairwise accuracy、coverage、tie rate 和分领域/维度表现。
-- `scripts/run_benchmark_smoke.sh` 可在没有私有数据时跑一个无 GPU benchmark smoke。
-- `scripts/run_sciimpact_smoke.sh` 可在没有下载完整 SciImpact 时验证成对影响力评估链路。
-
-## 4. 当前验证
-
-当前验证命令：
+真实用户数据入口：
 
 ```bash
-PYTHONPATH=src pytest -q
-scripts/run_local_smoke.sh /tmp/local-impact-ranking-final-local-smoke
-scripts/run_benchmark_smoke.sh /tmp/local-impact-ranking-final-benchmark-smoke
+BASE_URL=http://localhost:8000/v1 \
+MODEL=local-impact-judge-source-task-dpo \
+  scripts/run_user_impact.sh papers.external.jsonl runs/my-impact
 ```
 
-当前测试状态：
+该脚本会执行：
 
-- 本轮优化前基线：`170 passed`
-- 本轮优化后全量测试：`175 passed`
-- 本地 smoke 通过：`/tmp/local-impact-ranking-full-optimization-smoke-final`
-- SciCite benchmark smoke 通过：`/tmp/local-impact-ranking-full-optimization-benchmark-smoke-final`
-- 未启动模型服务，未占用 GPU
+1. 输入数据校验；
+2. `model-score-preflight` 估算模型请求量；
+3. 检查本地 OpenAI-compatible 模型服务；
+4. 运行 `model-score-dataset`；
+5. 生成 `impact_scores.csv/jsonl`；
+6. 生成 `model_impact_report.md/json`；
+7. 生成 `impact_claim_certificate.md/json`；
+8. 生成 `impact_score_cards.md/json`；
+9. 生成 `model_credibility_card.md/json`；
+10. 生成 `calibration_profile_card.md/json`；
+11. 刷新 `report_bundle/`，把模型可信度卡和校准可信度卡纳入交付包；
+12. 生成 `user_impact_status.json` 和 `user_impact_summary.md`。
 
-## 5. 当前结论
+`user_impact_summary.md` 是面向汇报的短报告，包含：
 
-项目已经达到可运行 MVP 状态：
+- claim boundary；
+- `report_decision`；
+- `model_credibility_status`、`model_identity_match` 和 `model_credibility_card.md`；
+- `calibration_status`、`calibration_model_identity_match` 和 `calibration_profile_card.md`；
+- top final impact scores；
+- evidence gaps；
+- recommended next actions；
+- 关键产物路径。
 
-- 能接收用户论文数据集，生成 dataset-local 影响力排名。
-- 能使用启发式 judge 做无 GPU smoke，也能接入 OpenAI-compatible 本地模型服务。
-- 能把模型选择、prompt、评分边、报告和运行环境全部落盘审计。
-- 能在没有人工标注的情况下用 proxy evaluation、baseline comparison、anomaly、stability 和 project readiness 做质量检查。
+## 4. 当前实现进展
 
-需要明确的边界：
+已实现的关键能力：
 
-- 当前不能证明“真实全局影响力”。
-- 没有人类标注时，评估结果是 proxy quality，不是 human-validated correctness。
-- 更大规模正式使用前应先跑 100、1k、5k 递增 pilot。
+- 数据输入：JSONL、CSV 转换、输入校验、OpenAlex/OpenCitations/外部证据导入。
+- 影响力评分：`impact_index_v3` evidence-first 分数、`final_impact_score` 可信度调整分数。
+- 模型部署：支持本地 OpenAI-compatible vLLM 服务。
+- 模型推荐：当前推荐 `local-impact-judge-source-task-dpo`，adapter 为 `qwen32b-source-task-sft16k4096-dpo16k1024-128step`。
+- 长任务可靠性：pairwise replay、resume、pairwise journal。
+- 公信力控制：impact claim certificate、impact validity evaluation、impact credibility scorecard、external evidence readiness。
+- 模型可信度控制：当前推荐模型证据卡、cross-seed SciImpact profile、weak-slice disclosure、低可信模型自动降级。
+- 校准可信度控制：SciImpact-derived confidence calibration profile、compatible model whitelist、ECE/MCE/Brier disclosure、错误校准 profile 自动降级。
+- 交付包：report bundle、score cards、user summary、deliverable check。
+- benchmark：SciImpact pairwise evaluation、SciImpact model credibility summary、candidate promotion gate、weak-slice error pack。
 
-## 6. 一句话总结
+## 5. 当前验证
 
-本项目基于 `ImpactRankings` 的核心思想，实现了一套本地可部署、可审计、可评估的 dataset-local 论文影响力排名系统；当前已具备从数据导入、模型判断、影响力聚合到报告汇报的完整 MVP 能力。
+最新验证状态：
+
+- 发布检查：`473 passed`，`Publish readiness checks passed.`
+- no-GPU deliverable check：已通过，并包含 `user_impact=passed`。
+- optional real-model deliverable smoke：已通过，`model_smoke=passed`。
+- 用户入口 replay 验证：已通过，输出 `user_impact_summary.md` 和 `report_decision=report_with_disclosure`。
+- GPU4 上推荐模型服务可用：`local-impact-judge-source-task-dpo`。
+
+关键验证路径：
+
+```bash
+scripts/run_deliverable_check.sh runs/deliverable-check
+CHECK_MODEL=1 BASE_URL=http://localhost:8010/v1 MODEL=local-impact-judge-source-task-dpo \
+  scripts/run_deliverable_check.sh runs/deliverable-check-model
+PYTHONPATH=src scripts/check_publish_ready.sh
+```
+
+## 6. 可信边界
+
+当前系统可以汇报：
+
+- 给定数据集内部的 dataset-local paper impact score；
+- 每篇论文的 evidence-first final impact score；
+- 分数来源、缺失证据、报告边界和建议补充数据；
+- 本地模型在 SciImpact 类 benchmark 上的中等可信度证据。
+
+当前系统不能直接宣称：
+
+- not global scientific impact；
+- 不是全局科学影响力排名；
+- 没有 future-window/external label 时，不能宣称 validated impact accuracy；
+- 没有高覆盖 DOI/OpenAlex/OpenCitations/BIP/Semantic Scholar/adoption 证据时，不能宣称 high credibility global impact。
+
+模型侧结论也应保守：
+
+- 当前推荐模型显著好于随机，但不是高可信 standalone impact oracle。
+- 多次弱切片 DPO 继续训练未超过当前推荐 adapter，已通过 promotion gate 拒绝。
+- 因此最终系统把模型作为辅助信号，把证据覆盖、外部证据、validity labels 和 claim certificate 作为公信力核心。
+
+## 7. 一句话结论
+
+项目已经从 MVP 进入可交付状态：用户给定论文 JSONL 数据集后，可以本地调用模型，生成每篇论文的 dataset-local 影响力分数、证据解释、可信边界、缺失证据清单、可汇报性结论和完整 report bundle。
