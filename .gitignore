@@ -10,3 +10,6 @@ build/
 data/
 models/
 runs/
+*.zip
+*.tar
+*.tar.gz

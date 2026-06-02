@@ -4,6 +4,7 @@ set -euo pipefail
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 test -f README.md
+test -f REPRODUCIBILITY.md
 test -f pyproject.toml
 test -f .gitignore
 test -f .github/workflows/tests.yml
@@ -15,6 +16,7 @@ test -f configs/calibration/sciimpact-qwen32b-heldout-p50.json
 test -f configs/model_credibility/local-impact-judge-source-task-dpo.json
 test -f scripts/run_quickstart.sh
 test -f scripts/run_impact_demo.sh
+test -f scripts/reproduce_no_gpu.sh
 test -f scripts/run_user_impact.sh
 test -f scripts/run_deliverable_check.sh
 test -f scripts/train_sciimpact_weak_slice_dpo.sh
@@ -26,6 +28,7 @@ git check-ignore \
   data/.publish-check \
   models/.publish-check \
   runs/.publish-check \
+  local-dataset.zip \
   >/dev/null
 
 if git ls-files data models runs | grep -q .; then
@@ -38,6 +41,8 @@ grep -q "report-bundle" README.md
 grep -q "dataset-local" README.md
 grep -q "run_quickstart.sh" README.md
 grep -q "run_impact_demo.sh" README.md
+grep -q "reproduce_no_gpu.sh" README.md
+grep -q "REPRODUCIBILITY.md" README.md
 grep -q "run_user_impact.sh" README.md
 grep -q "user_impact_status.json" README.md
 grep -q "user_impact_summary.md" README.md
@@ -110,6 +115,9 @@ grep -q "data/" docs/publish-checklist.md
 grep -q "models/" docs/publish-checklist.md
 grep -q "runs/" docs/publish-checklist.md
 grep -q "configs/calibration/" docs/publish-checklist.md
+grep -q "reproduce_no_gpu.sh" REPRODUCIBILITY.md
+grep -q "no_gpu_offline_reproduction" scripts/reproduce_no_gpu.sh
+grep -q "dataset-local paper influence" REPRODUCIBILITY.md
 
 PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m pytest -q
 

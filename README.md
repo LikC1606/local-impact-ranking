@@ -16,6 +16,31 @@ The core package and CI test suite do not require GPU libraries. Local LLM servi
 
 Before publishing or pushing to GitHub, run the checks in [docs/publish-checklist.md](docs/publish-checklist.md).
 
+## Reproduce From A Fresh Clone
+
+The public repository is reproducible without private datasets, generated `runs/`, model weights, a GPU, or a model server:
+
+```bash
+git clone https://github.com/LikC1606/local-impact-ranking.git
+cd local-impact-ranking
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+
+scripts/reproduce_no_gpu.sh runs/reproduce-no-gpu
+```
+
+The script installs the package, runs the full test suite and publish checks, then runs the no-GPU deliverable workflow. Expected key outputs include:
+
+- `runs/reproduce-no-gpu/reproduce_status.json`
+- `runs/reproduce-no-gpu/deliverable-check/impact-demo/model-impact/impact_scores.csv`
+- `runs/reproduce-no-gpu/deliverable-check/impact-demo/model-impact/impact_claim_certificate.md`
+- `runs/reproduce-no-gpu/deliverable-check/user-impact/user_impact_summary.md`
+- `runs/reproduce-no-gpu/deliverable-check/user-impact/model-impact/report_bundle/`
+
+See [REPRODUCIBILITY.md](REPRODUCIBILITY.md) for the exact no-GPU, optional local-model, and optional training reproduction paths.
+
 ## Install
 
 ```bash

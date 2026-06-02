@@ -367,17 +367,15 @@ def test_run_deliverable_check_script_runs_required_and_optional_delivery_paths(
     assert '"user_impact": "passed"' in script
 
 
-def test_github_actions_runs_publish_check_and_quickstart_smoke():
+def test_github_actions_runs_no_gpu_reproduction_entrypoint():
     workflow = Path(".github/workflows/tests.yml").read_text(encoding="utf-8")
 
     assert "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true" in workflow
     assert "actions/checkout@v6" in workflow
     assert "actions/setup-python@v6" in workflow
-    assert "scripts/check_publish_ready.sh" in workflow
-    assert "scripts/run_quickstart.sh" in workflow
-    assert "scripts/run_deliverable_check.sh" in workflow
-    assert "runs/quickstart" in workflow
-    assert "runs/deliverable-check" in workflow
+    assert "scripts/reproduce_no_gpu.sh" in workflow
+    assert "SKIP_INSTALL=1" in workflow
+    assert "runs/reproduce-no-gpu" in workflow
 
 
 def test_compare_model_judges_script_runs_base_candidate_and_reports_deltas():

@@ -23,11 +23,5 @@ jobs:
       - name: Install package
         run: python -m pip install -e ".[dev]"
 
-      - name: Run publish checks
-        run: scripts/check_publish_ready.sh
-
-      - name: Run quickstart smoke
-        run: scripts/run_quickstart.sh runs/quickstart
-
-      - name: Run deliverable check
-        run: scripts/run_deliverable_check.sh runs/deliverable-check
+      - name: Reproduce no-GPU deliverable
+        run: SKIP_INSTALL=1 scripts/reproduce_no_gpu.sh runs/reproduce-no-gpu
