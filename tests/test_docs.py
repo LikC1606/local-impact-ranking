@@ -27,6 +27,8 @@ def test_readme_links_to_input_schema_doc():
     text = Path("README.md").read_text(encoding="utf-8")
 
     assert "[docs/input-schema.md](docs/input-schema.md)" in text
+    assert "[docs/citation-data-sources.md](docs/citation-data-sources.md)" in text
+    assert "[docs/effective-citation-calculation.md](docs/effective-citation-calculation.md)" in text
     assert "run_impact_demo.sh" in text
     assert "offline replayed pairwise judgments" in text
     assert "impact_claim_certificate.md" in text
@@ -231,6 +233,36 @@ def test_readme_documents_model_score_dataset_final_score():
     assert "score_label_match_rate" in text
     assert "coverage_examples" in text
     assert "--label-normalization field-year-percentile" in text
+
+
+def test_citation_data_sources_doc_covers_source_roles_and_reconciliation():
+    text = Path("docs/citation-data-sources.md").read_text(encoding="utf-8")
+
+    assert "OpenAlex" in text
+    assert "Semantic Scholar" in text
+    assert "OpenCitations" in text
+    assert "PubMed/iCite" in text
+    assert "Crossref" in text
+    assert "semantic_scholar_influential_citation_count" in text
+    assert "field_year_normalized_citation_score" in text
+    assert "Do not average citation counts" in text
+    assert "citation_count_ratio" in text
+    assert "Life-Science Preference" in text
+
+
+def test_effective_citation_calculation_doc_covers_formula_and_outputs():
+    text = Path("docs/effective-citation-calculation.md").read_text(encoding="utf-8")
+
+    assert "citing_paper.references[].reference_id == cited_paper.paper_id" in text
+    assert "edge_effective_weight = max(role_weight(context_roles_for_edge))" in text
+    assert "effective_citation_raw" in text
+    assert "tied_rank_percentile(log1p(effective_citation_raw))" in text
+    assert "effective_citation_count" in text
+    assert "effective_citation_coverage" in text
+    assert "effective_citation_evidence_level" in text
+    assert "guideline" in text
+    assert "clinical" in text
+    assert "method" in text
 
 
 def test_readme_documents_long_context_tokenization_preflight():

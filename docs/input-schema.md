@@ -2,6 +2,8 @@
 
 The pipeline reads JSONL: one target paper per line. Each line must validate as a `Paper` record.
 
+For source-specific citation evidence and reconciliation rules, see [citation-data-sources.md](citation-data-sources.md). For the exact role weights and normalization used by `effective_citation_*` fields, see [effective-citation-calculation.md](effective-citation-calculation.md).
+
 ## Minimal Record
 
 ```json
@@ -104,6 +106,16 @@ PYTHONPATH=src python -m local_impact_ranking.cli enrich-openalex \
 ```
 
 The command writes `metadata.external_impact.field_year_percentile`, `metadata.external_impact.openalex_cited_by_count`, `metadata.citation_counts_by_year`, and `metadata.external_ids.openalex` when OpenAlex returns a match.
+
+You can populate Semantic Scholar citation and influential-citation evidence when papers have DOI or Semantic Scholar identifiers:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-semantic-scholar \
+  --input papers.openalex.jsonl \
+  --output papers.semantic-scholar.jsonl
+```
+
+The command writes compatible Semantic Scholar identifiers, citation counts, fields of study, and `metadata.external_impact.semantic_scholar_influential_citation_count` when a paper is matched.
 
 You can also populate DOI-level citation evidence from OpenCitations COCI/index v2 when papers have DOI IDs:
 

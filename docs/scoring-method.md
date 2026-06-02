@@ -87,6 +87,8 @@ The method/data/baseline cue list is intentionally simple and auditable. Current
 
 For paper-level `impact_index_v3`, the scorer now records an effective-citation audit layer for every paper. This layer is designed for biomedical and life-science corpora, where a citation in a clinical guideline, trial, assay protocol, reagent reuse, or dataset/tool reuse is usually stronger evidence than a generic background citation.
 
+The detailed reproducible specification is in [effective-citation-calculation.md](effective-citation-calculation.md). Source-specific citation evidence and reconciliation rules are in [citation-data-sources.md](citation-data-sources.md).
+
 The unit is an incoming internal citation edge: a paper in the supplied dataset cites another paper in the same dataset through `references[].reference_id`. Each edge receives at most one primary weighted credit, based on the strongest role found in its explicit citation contexts:
 
 ```text

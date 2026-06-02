@@ -11,6 +11,8 @@ test -f .github/workflows/tests.yml
 test -f docs/input-schema.md
 test -f docs/scoring-method.md
 test -f docs/evaluation-method.md
+test -f docs/citation-data-sources.md
+test -f docs/effective-citation-calculation.md
 test -f docs/publish-checklist.md
 test -f configs/calibration/sciimpact-qwen32b-heldout-p50.json
 test -f configs/model_credibility/local-impact-judge-source-task-dpo.json
@@ -43,6 +45,8 @@ grep -q "run_quickstart.sh" README.md
 grep -q "run_impact_demo.sh" README.md
 grep -q "reproduce_no_gpu.sh" README.md
 grep -q "REPRODUCIBILITY.md" README.md
+grep -q "docs/citation-data-sources.md" README.md
+grep -q "docs/effective-citation-calculation.md" README.md
 grep -q "run_user_impact.sh" README.md
 grep -q "user_impact_status.json" README.md
 grep -q "user_impact_summary.md" README.md
@@ -72,6 +76,7 @@ grep -q "sciimpact_model_candidate_gate" README.md
 grep -q "sciimpact_model_weak_slice_error_pack" README.md
 grep -q "train_sciimpact_weak_slice_dpo.sh" README.md
 grep -q "relative_citation_ratio_score" README.md
+grep -q "enrich-semantic-scholar" README.md
 grep -q "import-external-evidence" README.md
 grep -q -- "--validity-labels" README.md
 grep -q -- "--pairwise-judgments" README.md
@@ -99,6 +104,20 @@ grep -q "media_impact_score" docs/scoring-method.md
 grep -q "award_impact_score" docs/scoring-method.md
 grep -q "Rank Centrality" docs/scoring-method.md
 grep -q "rank-percentile" docs/scoring-method.md
+grep -q "effective-citation-calculation.md" docs/scoring-method.md
+grep -q "citation-data-sources.md" docs/scoring-method.md
+grep -q "enrich-semantic-scholar" docs/input-schema.md
+grep -q "semantic_scholar_influential_citation_count" docs/input-schema.md
+grep -q "OpenAlex" docs/citation-data-sources.md
+grep -q "Semantic Scholar" docs/citation-data-sources.md
+grep -q "OpenCitations" docs/citation-data-sources.md
+grep -q "PubMed/iCite" docs/citation-data-sources.md
+grep -q "do not silently average incompatible counts" docs/citation-data-sources.md
+grep -q "effective_citation_raw" docs/effective-citation-calculation.md
+grep -q "edge_effective_weight" docs/effective-citation-calculation.md
+grep -q "guideline" docs/effective-citation-calculation.md
+grep -q "clinical" docs/effective-citation-calculation.md
+grep -q "effective_citation_score" docs/effective-citation-calculation.md
 grep -q "spearman_correlation" docs/evaluation-method.md
 grep -q "credibility_scorecard" docs/evaluation-method.md
 grep -q "outlier robustness" docs/evaluation-method.md

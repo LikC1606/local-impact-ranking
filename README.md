@@ -132,7 +132,7 @@ Use JSONL with one paper per line:
 
 References should include stable `reference_id` values when available. Missing reference IDs are filled during normalization.
 
-For the full schema, citation-context format, and benchmark gold-label conventions, see [docs/input-schema.md](docs/input-schema.md).
+For the full schema, citation-context format, and benchmark gold-label conventions, see [docs/input-schema.md](docs/input-schema.md). For the scoring formulas and credibility boundaries, see [docs/scoring-method.md](docs/scoring-method.md). For the citation data source policy, see [docs/citation-data-sources.md](docs/citation-data-sources.md). For the exact life-science effective-citation calculation, see [docs/effective-citation-calculation.md](docs/effective-citation-calculation.md).
 
 To add external citation evidence from OpenAlex before scoring:
 
@@ -144,6 +144,16 @@ PYTHONPATH=src python -m local_impact_ranking.cli enrich-openalex \
 ```
 
 Use `papers.openalex.jsonl` as the input to `model-score-dataset`. The enrichment command uses DOI or OpenAlex IDs and writes `citation_count`, yearly citation counts, OpenAlex IDs, and `metadata.external_impact.field_year_percentile` when a work is matched.
+
+To add Semantic Scholar citation counts and influential-citation evidence:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-semantic-scholar \
+  --input papers.openalex.jsonl \
+  --output papers.semantic-scholar.jsonl
+```
+
+Use Semantic Scholar as a source-specific signal, especially for `metadata.external_impact.semantic_scholar_influential_citation_count`; do not average it with OpenAlex or OpenCitations counts. See [docs/citation-data-sources.md](docs/citation-data-sources.md) for the source comparison and reconciliation policy.
 
 To add DOI-level citation counts and recover dataset-internal citation graph edges from OpenCitations:
 
