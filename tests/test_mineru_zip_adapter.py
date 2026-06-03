@@ -1,6 +1,8 @@
 import json
 from zipfile import ZipFile
 
+import pytest
+
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.mineru_zip_adapter import convert_mineru_zip_to_jsonl
 
@@ -30,7 +32,7 @@ Cytotoxic T lymphocytes eliminate infected or malignant cells.
     assert summary["without_references_count"] == 0
     assert papers[0].paper_id == "p1"
     assert papers[0].title == "Design principles of the cytotoxic CD8+ T cell response"
-    assert papers[0].year == 2025
+    assert papers[0].year == 2026
     assert [reference.reference_id for reference in papers[0].references] == [
         "p1_ref_001",
         "p1_ref_002",
@@ -152,3 +154,78 @@ Author, A. (2022). Reference with DOI. Journal 1, 1-2. doi:10.1000/reference-onl
     assert "doi" not in record
     assert record["metadata"].get("external_ids") is None
     assert record["references"][0]["doi"] == "10.1000/reference-only"
+
+
+def test_convert_mineru_zip_rejects_oversized_markdown_entry(tmp_path):
+    source = tmp_path / "papers.zip"
+    output = tmp_path / "papers.jsonl"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("p5/auto/p5.md", "# Large\n\n" + ("x" * 100))
+
+    with pytest.raises(ValueError, match="exceeds max_markdown_bytes"):
+        convert_mineru_zip_to_jsonl(source, output, max_markdown_bytes=32)
+
+
+def test_convert_mineru_zip_does_not_use_single_tail_reference_doi_as_paper_doi(
+    tmp_path,
+):
+    source = tmp_path / "papers.zip"
+    output = tmp_path / "papers.jsonl"
+    markdown = """# Target Without Front DOI
+
+This paper itself has no DOI in the front matter.
+
+1. Author, A. Single reference with DOI. Journal 1, 1-2 (2022). doi:10.1000/single-reference-only
+"""
+    with ZipFile(source, "w") as archive:
+        archive.writestr("p6/auto/p6.md", markdown)
+
+    convert_mineru_zip_to_jsonl(source, output)
+
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert "doi" not in record
+    assert record["metadata"].get("external_ids") is None
+    assert len(record["references"]) == 1
+    assert record["references"][0]["doi"] == "10.1000/single-reference-only"
+
+
+def test_convert_mineru_zip_deduplicates_references_by_doi(tmp_path):
+    source = tmp_path / "papers.zip"
+    output = tmp_path / "papers.jsonl"
+    markdown = """# Target With Duplicate Reference DOI
+
+## References
+
+1. Author, A. First parsed title. Journal 1, 1-2 (2022). doi:10.1000/duplicate-ref
+2. Author, A. Alternate parsed title. Journal 1, 1-2 (2022). https://doi.org/10.1000/duplicate-ref
+"""
+    with ZipFile(source, "w") as archive:
+        archive.writestr("p7/auto/p7.md", markdown)
+
+    convert_mineru_zip_to_jsonl(source, output)
+
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert len(record["references"]) == 1
+    assert record["references"][0]["doi"] == "10.1000/duplicate-ref"
+
+
+def test_convert_mineru_zip_extracts_plain_references_heading(tmp_path):
+    source = tmp_path / "papers.zip"
+    output = tmp_path / "papers.jsonl"
+    markdown = """# Target With Plain References Heading
+
+Main text without a target-paper DOI.
+
+References
+
+Author, A. (2022). Plain heading reference title. Journal 1, 1-2. doi:10.1000/plain-heading-ref
+"""
+    with ZipFile(source, "w") as archive:
+        archive.writestr("p8/auto/p8.md", markdown)
+
+    convert_mineru_zip_to_jsonl(source, output)
+
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert "doi" not in record
+    assert len(record["references"]) == 1
+    assert record["references"][0]["doi"] == "10.1000/plain-heading-ref"

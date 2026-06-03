@@ -5,8 +5,13 @@ import re
 from pathlib import Path
 from statistics import median
 from typing import Any
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
+
+DEFAULT_MAX_MARKDOWN_BYTES = 50 * 1024 * 1024
+DEFAULT_MAX_TOTAL_MARKDOWN_BYTES = 50 * 1024 * 1024 * 1024
+DEFAULT_MAX_MARKDOWN_FILES = 200_000
+DEFAULT_MAX_COMPRESSION_RATIO = 1000.0
 
 DOI_RE = re.compile(
     r"(?:doi\s*[: ]\s*|https?://doi\.org/)?(10\.\d{4,9}/[^\s,;\]\)]+)",
@@ -14,7 +19,9 @@ DOI_RE = re.compile(
 )
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 REF_HEADING_RE = re.compile(
-    r"^#{1,6}\s*(references|reference|bibliography|literature cited)\b",
+    r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*"
+    r"(references|reference|bibliography|literature cited)"
+    r"(?:\s+and\s+notes)?\s*(?:\*\*)?\s*:?\s*$",
     re.I,
 )
 REFERENCE_START_RE = re.compile(
@@ -41,18 +48,29 @@ def convert_mineru_zip_to_jsonl(
     output_path: str | Path,
     *,
     with_references_output_path: str | Path | None = None,
+    max_markdown_bytes: int = DEFAULT_MAX_MARKDOWN_BYTES,
+    max_total_markdown_bytes: int = DEFAULT_MAX_TOTAL_MARKDOWN_BYTES,
+    max_markdown_files: int = DEFAULT_MAX_MARKDOWN_FILES,
+    max_compression_ratio: float = DEFAULT_MAX_COMPRESSION_RATIO,
 ) -> dict[str, Any]:
     records = []
     source = Path(input_path)
     with ZipFile(source) as archive:
-        markdown_names = sorted(
-            name
-            for name in archive.namelist()
-            if re.match(r"^([^/]+)/auto/\1\.md$", name)
+        markdown_infos = _validated_markdown_infos(
+            archive,
+            max_markdown_bytes=max_markdown_bytes,
+            max_total_markdown_bytes=max_total_markdown_bytes,
+            max_markdown_files=max_markdown_files,
+            max_compression_ratio=max_compression_ratio,
         )
-        for markdown_name in markdown_names:
+        for markdown_info in markdown_infos:
+            markdown_name = markdown_info.filename
             paper_id = markdown_name.split("/", 1)[0]
-            text = archive.read(markdown_name).decode("utf-8", "replace")
+            text = _read_markdown_text(
+                archive,
+                markdown_info,
+                max_markdown_bytes=max_markdown_bytes,
+            )
             records.append(_record_from_markdown(paper_id, markdown_name, text, source))
 
     destination = Path(output_path)
@@ -87,6 +105,72 @@ def convert_mineru_zip_to_jsonl(
             str(with_references_output_path) if with_references_output_path else None
         ),
     }
+
+
+def _validated_markdown_infos(
+    archive: ZipFile,
+    *,
+    max_markdown_bytes: int,
+    max_total_markdown_bytes: int,
+    max_markdown_files: int,
+    max_compression_ratio: float,
+) -> list[ZipInfo]:
+    markdown_infos = [
+        info
+        for info in archive.infolist()
+        if re.match(r"^([^/]+)/auto/\1\.md$", info.filename)
+    ]
+    if len(markdown_infos) > max_markdown_files:
+        raise ValueError(
+            f"MinerU ZIP contains {len(markdown_infos)} markdown files, "
+            f"exceeds max_markdown_files={max_markdown_files}"
+        )
+
+    total_bytes = 0
+    for info in markdown_infos:
+        if info.file_size > max_markdown_bytes:
+            raise ValueError(
+                f"{info.filename} is {info.file_size} bytes, "
+                f"exceeds max_markdown_bytes={max_markdown_bytes}"
+            )
+        total_bytes += info.file_size
+        if total_bytes > max_total_markdown_bytes:
+            raise ValueError(
+                f"MinerU ZIP markdown total is {total_bytes} bytes, "
+                f"exceeds max_total_markdown_bytes={max_total_markdown_bytes}"
+            )
+        if info.file_size > 0 and info.compress_size == 0:
+            raise ValueError(f"{info.filename} has zero compressed size")
+        if info.compress_size > 0:
+            ratio = info.file_size / info.compress_size
+            if ratio > max_compression_ratio:
+                raise ValueError(
+                    f"{info.filename} compression ratio {ratio:.1f} "
+                    f"exceeds max_compression_ratio={max_compression_ratio}"
+                )
+    return sorted(markdown_infos, key=lambda info: info.filename)
+
+
+def _read_markdown_text(
+    archive: ZipFile,
+    info: ZipInfo,
+    *,
+    max_markdown_bytes: int,
+) -> str:
+    chunks: list[bytes] = []
+    total = 0
+    with archive.open(info) as handle:
+        while True:
+            chunk = handle.read(min(64 * 1024, max_markdown_bytes + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > max_markdown_bytes:
+                raise ValueError(
+                    f"{info.filename} exceeds max_markdown_bytes={max_markdown_bytes}"
+                )
+    return b"".join(chunks).decode("utf-8", "replace")
 
 
 def _record_from_markdown(
@@ -200,7 +284,7 @@ def _extract_references(text: str, paper_id: str) -> list[dict[str, Any]]:
         entries = _numbered_reference_entries(text)
 
     references = []
-    seen: set[tuple[str, str | None]] = set()
+    seen: set[tuple[str, str]] = set()
     for raw in entries:
         if len(raw) < 30 or ADMIN_RE.search(raw):
             continue
@@ -208,7 +292,12 @@ def _extract_references(text: str, paper_id: str) -> list[dict[str, Any]]:
             continue
         title = _reference_title(raw)
         doi = _extract_doi(raw)
-        key = (title.lower(), doi)
+        year_match = YEAR_RE.search(raw)
+        key = _reference_dedup_key(
+            title,
+            doi,
+            year_match.group(1) if year_match else None,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -220,11 +309,21 @@ def _extract_references(text: str, paper_id: str) -> list[dict[str, Any]]:
         if doi:
             reference["doi"] = doi
             reference["external_ids"] = {"doi": doi}
-        year_match = YEAR_RE.search(raw)
         if year_match:
             reference["year"] = int(year_match.group(1))
         references.append(reference)
     return references
+
+
+def _reference_dedup_key(
+    title: str,
+    doi: str | None,
+    year: str | None,
+) -> tuple[str, str]:
+    if doi:
+        return ("doi", doi)
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+    return ("title_year", f"{normalized_title}|{year or ''}")
 
 
 def _reference_entries_after_heading(text: str) -> list[str]:
@@ -245,9 +344,11 @@ def _reference_entries_after_heading(text: str) -> list[str]:
 def _numbered_reference_entries(text: str) -> list[str]:
     lines = text.splitlines()
     blocks = _reference_entries_from_lines(lines)
-    if len(blocks) < 2:
-        return []
-    return blocks
+    if len(blocks) >= 2:
+        return blocks
+    if blocks and _has_single_reference_tail(lines):
+        return blocks
+    return []
 
 
 def _target_text_before_references(text: str) -> str:
@@ -268,9 +369,44 @@ def _target_text_before_references(text: str) -> str:
                 YEAR_RE.search(candidate_text) or DOI_RE.search(candidate_text)
             ):
                 following_reference_count += 1
-        if following_reference_count >= 2:
+        if following_reference_count >= 2 or _looks_like_single_reference_tail(
+            lines,
+            index,
+            following_reference_count,
+        ):
             return "\n".join(lines[:index])
     return text
+
+
+def _has_single_reference_tail(lines: list[str]) -> bool:
+    for index, line in enumerate(lines):
+        stripped = _clean(line)
+        if not REFERENCE_START_RE.match(stripped):
+            continue
+        if not (YEAR_RE.search(stripped) or DOI_RE.search(stripped)):
+            continue
+        following_reference_count = sum(
+            1
+            for candidate in lines[index : index + 40]
+            if REFERENCE_START_RE.match(_clean(candidate))
+            and (YEAR_RE.search(_clean(candidate)) or DOI_RE.search(_clean(candidate)))
+        )
+        if _looks_like_single_reference_tail(lines, index, following_reference_count):
+            return True
+    return False
+
+
+def _looks_like_single_reference_tail(
+    lines: list[str],
+    index: int,
+    following_reference_count: int,
+) -> bool:
+    if following_reference_count != 1:
+        return False
+    nonempty_after = [_clean(line) for line in lines[index:] if _clean(line)]
+    if len(nonempty_after) > 6:
+        return False
+    return index >= max(3, len(lines) // 3)
 
 
 def _reference_paragraphs_from_lines(lines: list[str]) -> list[str]:
@@ -382,11 +518,12 @@ def _extract_year(text: str, doi: str | None) -> int | None:
     for pattern in [
         r"PUBLISHED\s+\d{1,2}\s+[A-Za-z]+\s+(\d{4})",
         r"published\s+online\s+\d{1,2}\s+[A-Za-z]+\s+(\d{4})",
-        r"received\s+\w+\s+\d{1,2},?\s+(\d{4})",
-        r"received\s+\d{1,2}\s+[A-Za-z]+\s+(\d{4})",
         r"accepted\s+\w+\s+\d{1,2},?\s+(\d{4})",
+        r"accepted\s+\d{1,2}\s+[A-Za-z]+\s+(\d{4})",
         r"Cite this:[^\n]{0,120}\b(20\d{2})\b",
         r"©\s*(20\d{2})\b",
+        r"received\s+\w+\s+\d{1,2},?\s+(\d{4})",
+        r"received\s+\d{1,2}\s+[A-Za-z]+\s+(\d{4})",
     ]:
         match = re.search(pattern, text[:8000], re.I)
         if match:

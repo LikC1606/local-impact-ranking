@@ -1,5 +1,147 @@
 # Progress Log
 
+## 2026-06-03
+
+- Verified the user's 100-paper MinerU dataset at `/home/wyx/zh/local-impact-ranking/data_100.zip`.
+  - Conversion artifacts are under `runs/data-100-verification/`.
+  - OpenAlex enrichment matched most article records; OpenCitations supplied DOI-level current citation evidence for records with DOI.
+  - Curated output: `runs/data-100-verification/papers.enriched.curated.jsonl`.
+  - Curation summary: 100 input records, 85 kept article records, 15 excluded supplement/extraction-artifact records, and 3 title repairs from OpenAlex.
+  - Reference audit: 3820 references after curation, 1522 reference DOIs, 2 self DOI matches, and 0 cross-paper internal DOI matches.
+  - Validation passed as runnable with 1 warning: one kept DOI-backed article has no extracted references.
+  - External readiness decision: `usable_with_disclosure`; DOI coverage `0.929`, citation-count coverage `0.929`, yearly citation-history coverage `0.918`, field/year percentile coverage `0.859`, internal citation edge count `0`.
+  - Preflight for model scoring: 85 papers, 200 planned pairwise comparisons, bidirectional estimate 400 model requests, pair plan quality `reportable`.
+  - No-model replay score bundle: `runs/data-100-verification/model-score-curated-nomodel`.
+  - Score result: 3 papers have nonzero final citation-impact scores, 82 are zero because current external citations are mostly zero and effective/internal citation evidence is absent.
+  - Claim certificate: `evidence_supported`, can report dataset-local score, cannot claim validated impact accuracy or high credibility.
+- Ran a model-backed user workflow on the curated 85-paper dataset with the recommended local Qwen32B LoRA judge.
+  - Served `local-impact-judge-source-task-dpo` via vLLM on GPU5 at `http://127.0.0.1:8010/v1`, then stopped the service and released GPU memory after scoring.
+  - Initial `PAIR_BUDGET=auto` run only produced 43 pairwise comparisons and was exploratory because the pairwise graph had 42 connected components.
+  - Re-ran with `PAIR_BUDGET=manual MAX_PAIRS=200 TARGET_PAPER_COVERAGE=1.0`, resuming the 43 existing judgments and generating 157 more.
+  - Final model-backed output: `runs/data-100-verification/user-impact-model-p200`.
+  - Pair plan quality: `reportable`; 85/85 papers compared, connected component count `1`, min planned comparisons per paper `4`.
+  - Pairwise judgments: 200 total, 190 parseable, parseable rate `0.95`.
+  - Pairwise stability: `moderate`, mean top-20 retention `0.80375`, 32 unstable papers.
+  - Final score stability: `stable`, mean top-20 retention `1.0`, 0 unstable papers.
+  - Model credibility card: `moderate_credibility`, grade `B`, pooled SciImpact accuracy `0.658889`, cannot claim high model credibility.
+  - Calibration card: `calibration_supported`, ECE `0.086021`, model identity match true.
+  - Claim certificate remains `evidence_supported`: dataset-local scores can be reported with disclosure, but validated/high-credibility impact accuracy is still not supported.
+- Ran the public no-GPU reproduction path end to end.
+  - Command: `scripts/reproduce_no_gpu.sh runs/reproduce-no-gpu-fresh-20260603`.
+  - The script performed editable package installation, `scripts/check_publish_ready.sh`, and `scripts/run_deliverable_check.sh`.
+  - Result: `runs/reproduce-no-gpu-fresh-20260603/reproduce_status.json` reports `status=passed`, `publish_ready=passed`, and `deliverable_check=passed`.
+  - Deliverable status reports `quickstart=passed`, `impact_demo=passed`, `user_impact=passed`, `sciimpact_fixture=passed`, `backtest_evidence=passed`, and `model_smoke=skipped`.
+  - The reproduced user-impact artifacts include `impact_scores.csv`, `user_impact_summary.md`, `impact_claim_certificate.md`, model/calibration credibility cards, and a report bundle.
+- Added automatic citation-evidence lookup to the user workflow.
+  - `scripts/run_user_impact.sh` now supports `AUTO_ENRICH=1`.
+  - Default remains `AUTO_ENRICH=0`, preserving offline replay and no-GPU reproduction.
+  - `AUTO_ENRICH_SOURCES=openalex,icite,opencitations,semantic_scholar` runs the existing enrichment commands before validation, preflight, and scoring.
+  - The workflow records `scoring_input`, `auto_enrich_enabled`, `auto_enrich_sources`, `auto_enrich_output`, and `auto_enrich_status` in `user_impact_status.json` and `user_impact_summary.md`.
+  - Real default replay smoke passed at `/tmp/local-impact-user-impact-auto-enrich-default`.
+  - Real `AUTO_ENRICH=1 AUTO_ENRICH_SOURCES=openalex` smoke passed at `/tmp/local-impact-user-impact-auto-enrich-openalex`; OpenAlex matched `0/4` demo papers, as expected for synthetic fixture titles, but the automatic lookup-to-scoring path completed.
+  - Focused script/docs checks passed: `26 passed`.
+- Added direct NIH iCite enrichment for life-science datasets.
+  - New CLI: `enrich-icite`.
+  - New function: `enrich_papers_with_icite`.
+  - It uses explicit PMID values from `metadata.external_ids.pmid`, `metadata.pmid`, or top-level `pmid`; local numeric `paper_id` values are not treated as PMIDs.
+  - It writes PubMed/iCite citation counts, RCR, citations/year, APT, NIH percentile, Human/Animal/Molecular scores, expected citation rate, field citation rate, and clinical-citation flags under `metadata.external_impact`.
+  - Real iCite API smoke on three OpCitance PMIDs matched `3/3` and wrote `pubmed_citation_count`, `icite_citation_count`, `relative_citation_ratio`, `nih_percentile`, and `apt`.
+  - `AUTO_ENRICH=1 AUTO_ENRICH_SOURCES=icite` user workflow smoke passed at `/tmp/local-impact-user-impact-auto-enrich-icite`.
+- Added extra biomedical citation source lookup and re-ran the user's 85-paper curated dataset.
+  - Fixed iCite PMID extraction so local numeric `paper_id` values are no longer treated as PMIDs.
+  - Added `enrich-europepmc`, which matched 85/85 curated papers and recovered corrected PMID/PMCID evidence from DOI.
+  - Added `enrich-ncbi-citations`, which queries NCBI ELink PubMed cited-in and PMC cited-by in batches.
+  - NCBI PubMed cited-in is included in true-citation scoring as `true_citation_ncbi_pubmed_raw`; NCBI PMC cited-by is retained as audit-only because the user-data run produced an implausible PMC-only `246` count for `42032168`.
+  - `scripts/run_user_impact.sh` now supports `AUTO_ENRICH_SOURCES=openalex,europepmc,icite,ncbi_citations,opencitations,semantic_scholar`.
+  - Real extra-source artifacts:
+    - `runs/data-100-verification/extra-sources/papers.europepmc.jsonl`
+    - `runs/data-100-verification/extra-sources/papers.europepmc.icite.jsonl`
+    - `runs/data-100-verification/extra-sources/papers.europepmc.icite.ncbi.jsonl`
+    - `runs/data-100-verification/user-impact-model-p200-extra-sources-replay/model-impact`
+  - Manual spot checks found that some DOI/PMID matches were actually references inside the target PDF rather than the target article itself.
+  - Added title-identity guarding in `impact_fusion.py`: if the external title and local title are clearly inconsistent, source-specific raw counts remain in CSV for audit but are excluded from `true_citation_raw` and final scoring.
+  - Recovery result after identity recovery: 85 scored papers, 3 final nonzero true-citation scores, 84 matched rows, and 1 unresolved extract-only row (`42124699`).
+  - The current top true-citation papers are `42125479` (`24`, OpenCitations), `42032168` (`6`, Crossref), and `42108843` (`1`, Semantic Scholar).
+  - Main gain: corrected life-science identifiers, correct NCBI ELink per-ID mapping, wrong-paper DOI/PMID citation leakage prevention, and recovery of two previously false high-score rows back to 0.
+  - Verification passed after this source expansion and identity guard: `PYTHONPATH=src pytest -q` reported `563 passed`; `scripts/check_publish_ready.sh` reported `563 passed` and `Publish readiness checks passed.`
+- Added three more no-key open citation-evidence sources.
+  - New CLIs: `enrich-crossref`, `enrich-datacite`, and `enrich-openaire`.
+  - Crossref writes DOI-level `crossref_is_referenced_by_count` / `crossref_cited_by_count` plus title/publisher identity fields.
+  - DataCite writes `datacite_citation_count`, `datacite_view_count`, and `datacite_download_count`, useful for Zenodo/data/software DOI records.
+  - OpenAIRE writes `openaire_citation_count`, `openaire_influence`, `openaire_popularity`, and `openaire_impulse`.
+  - `scripts/run_user_impact.sh` default auto-enrichment order is now `openalex,europepmc,identity_recovery,europepmc,crossref,icite,ncbi_citations,opencitations,semantic_scholar,datacite,openaire`.
+  - Fusion now exposes `true_citation_datacite_raw` and `true_citation_openaire_raw`; identity quarantine removes DataCite/OpenAIRE evidence when external titles mismatch.
+  - Focused verification passed: 86 enrichment/fusion/model-output tests and 46 docs/scripts tests.
+  - Final verification passed: `PYTHONPATH=src pytest -q` reported `573 passed`; `scripts/check_publish_ready.sh` reported `573 passed` and `Publish readiness checks passed.`
+  - Re-ran the user's 85-paper identity-recovered dataset with the three new sources:
+    - Crossref matched `84/85`.
+    - DataCite matched `1/85`.
+    - OpenAIRE matched `12/85`.
+    - No-GPU replay output: `runs/data-100-verification/user-impact-model-p200-extra-open-sources-replay/model-impact`.
+    - Final nonzero count remained `3/85`; new source-specific nonzero raw evidence was limited to Crossref `1` row and OpenAIRE `1` row, both already covered by existing nonzero papers.
+- Added another open-source citation evidence expansion.
+  - New CLIs: `enrich-datacite-events` and `enrich-wikidata`.
+  - DataCite Events queries incoming DOI events with `obj-id=https://doi.org/<doi>` and only counts `references` plus `cites` relation types as citation evidence; other relation/event totals remain audit fields.
+  - DataCite Events is now in the default `AUTO_ENRICH_SOURCES` chain after `datacite` and before `openaire`.
+  - Wikidata uses DOI `P356` and cites-work `P2860` via Wikidata Query Service and writes `wikidata_cited_by_count`, `wikidata_entity`, and `wikidata_title`; it is optional, not default, because the public endpoint timed out in this environment.
+  - Fusion now exposes `true_citation_datacite_events_raw` and `true_citation_wikidata_raw`, and identity guarding includes `wikidata_title`.
+  - Focused verification passed: 54 tests covering the new enrichers, fusion, output fields, docs, and scripts.
+  - Full verification passed: `PYTHONPATH=src pytest -q` reported `579 passed`.
+  - User-data replay:
+    - DataCite Events matched `85/85`, with `0` positive incoming DOI citation-event counts and `85` verified-zero event counts.
+    - Enriched input: `runs/data-100-verification/extra-sources/papers.identity_recovered.europepmc.icite.ncbi.crossref.datacite.openaire.datacite_events.jsonl`.
+    - No-GPU replay output: `runs/data-100-verification/user-impact-model-p200-extra-open-sources-datacite-events-replay/model-impact`.
+    - Final nonzero count remained `3/85`; `true_citation_datacite_events_raw` was `0` for all rows.
+    - Current top three remain `42125479` (`24`, OpenCitations), `42032168` (`6`, Crossref), and `42108843` (`1`, Semantic Scholar).
+- Added Crossref Data Citations and PLOS Metrics enrichment.
+  - New CLIs: `enrich-crossref-data-citations` and `enrich-plos-metrics`.
+  - Crossref Data Citations writes `crossref_data_citation_count` / `crossref_data_citations_total_results`, exposes `true_citation_crossref_data_citations_raw`, and is now in the default auto-enrichment chain after Crossref.
+  - PLOS Metrics writes `plos_counter_total_all`, `plos_counter_total_month`, and `article_usage_count`; it is optional and audit/external-adoption oriented, not a direct true/effective citation score input.
+  - Focused verification passed: 60 tests covering new enrichers, fusion, model output columns, docs, and scripts.
+  - Full verification passed: `PYTHONPATH=src pytest -q` reported `585 passed`.
+  - User-data replay:
+    - Crossref Data Citations matched `85/85`, with `0` positive data-citation counts and `85` verified-zero counts.
+    - PLOS Metrics matched `0/85`.
+    - No-GPU replay output: `runs/data-100-verification/user-impact-model-p200-extra-open-sources-more-replay/model-impact`.
+    - Final nonzero count remained `3/85`; `true_citation_crossref_data_citations_raw` was `0` for all rows.
+- Added first-class import support for high-recall citation-count exports.
+  - `import-external-evidence` now matches external evidence by PMID and PMCID in addition to paper ID, DOI, OpenAlex ID, and Semantic Scholar/S2 ID.
+  - Compatible user-supplied count fields now include `ucite_citation_count`, `nih_occ_citation_count`, `dimensions_citation_count`, `scopus_citation_count`, `web_of_science_citation_count`, `lens_citation_count`, and `google_scholar_citation_count`.
+  - True-citation fusion now treats those sources as source-specific evidence, records `true_citation_*_raw` columns, uses the maximum compatible count for scoring, and still never sums overlapping citation databases.
+  - Citation completeness audit source coverage now includes the high-recall sources, making source conflicts and residual missing-citation risk visible in reports.
+  - Added `external-evidence-template` so users can generate a CSV with paper identifiers plus supported high-recall source columns, fill exported counts, then merge it with `import-external-evidence`.
+  - The template pre-fills existing input citation counts and leaves missing high-recall source columns blank for external export joins.
+  - The importer now preserves high-recall external title fields and `external_identity_status`, so filled templates can activate the existing title identity guard.
+  - Added `scripts/apply_high_recall_evidence.sh`, which imports a filled external evidence CSV, writes before/after citation completeness audit artifacts, records `citation_completeness_delta`, and optionally replays existing pairwise judgments to recompute reports without GPU inference.
+  - External evidence import summaries now include `evidence_validation` diagnostics for rows without match keys, duplicate match keys, invalid numeric cells, and negative numeric cells.
+  - Verification passed: targeted import/fusion/audit/docs/scripts tests, `PYTHONPATH=src pytest -q` (`631 passed`), and `scripts/check_publish_ready.sh` (`Publish readiness checks passed`).
+
+## 2026-06-02
+
+- Added a reusable OpCitance + NIH iCite current-impact benchmark builder.
+  - New module: `src/local_impact_ranking/opcitance_benchmark.py`.
+  - New CLI: `build-opcitance-icite-current-benchmark`.
+  - It parses OpCitance PMID citation-context edges, fetches NIH iCite labels, builds local paper JSONL, computes project-native `impact_scores.csv`, and writes current-impact credibility reports.
+  - Verification passed for OpCitance, iCite, current credibility, docs, and final-score focused tests.
+- Ran an expanded public benchmark on `data/external/opcitance/opcitance_Q.txt`.
+  - Output directory: `runs/opcitance-icite-current-expanded`.
+  - Built 1000 papers, 1000 iCite label rows, 998 RCR labels, 1224 internal reference edges, 5442 citation contexts, and effective-citation coverage `0.713`.
+  - Final benchmark summary: `runs/opcitance-icite-current-expanded/opcitance_icite_benchmark_summary.md`.
+- Changed the default report score from `0.80 true + 0.20 effective` to `0.95 true + 0.05 effective`.
+  - Rationale: expanded OpCitance + iCite validation shows pure true citation is the strongest RCR baseline, while heavier effective-citation weights reduce current-impact alignment.
+  - The new final score remains a two-category score, but effective citation is a conservative context adjustment rather than a large-weight component.
+  - New sensitivity fields: `score_100_true_00_effective`, `score_95_true_05_effective`, and `score_90_true_10_effective`; existing `score_80/70/50/30` fields are retained.
+- Updated current-impact credibility gating.
+  - Component diagnostic columns such as `effective_citation_score` can be included in alignment tables without being treated as weight-sensitivity gate columns.
+  - Gate columns now focus on near-default true/effective weight variants.
+- Public benchmark result after the weight change:
+  - RCR report: `high_credibility`, grade `A`.
+  - Final-score multi-metric report: `high_credibility`, grade `A`.
+  - `final_impact_score` vs RCR: Spearman `0.985`, Kendall `0.898`, pairwise accuracy `0.948`, NDCG@K `0.950`.
+- Formalized OpCitance + NIH iCite in the benchmark registry and public docs.
+  - `benchmarks plan --markdown` now lists it as the second recommended public benchmark after direct NIH iCite/RCR.
+  - Final verification after the registry/docs integration passed: full test suite `536 passed`; `scripts/check_publish_ready.sh` also passed with `536 passed` and `Publish readiness checks passed.`
+
 ## 2026-05-31
 
 - Added a report-facing model credibility card to the user workflow.
@@ -883,6 +1025,15 @@
   - `custom` remains the default, preserving prior behavior.
   - The selected preset is written to `user_impact_status.json` and `user_impact_summary.md`.
   - Verified `RUN_PRESET=quick` at `/tmp/local-impact-user-impact-quick-preset`; preflight used `requested_max_pairs=50`, `target_paper_coverage=0.1`, and `run_preset=quick`.
+- Same-paper duplicate reference deduplication:
+  - Added normalization-time deduplication for repeated references inside one target paper.
+  - Deduplication uses conservative keys: DOI, OpenAlex/Semantic Scholar/PMID external IDs, normalized title/year/authors, then repeated `reference_id`.
+  - The first reference is kept, missing metadata can be merged from removed duplicates, and `citation_contexts[].reference_id` is normalized and remapped to the kept ID.
+  - Source provenance from removed duplicates, including raw citation and match-method evidence, is retained on the kept reference as `deduplicated_reference_evidence`.
+  - The audit record is written to `metadata.reference_deduplication` with original count, deduplicated count, removed count, and duplicate ID map.
+  - Added a scoring regression test showing one citing paper to one cited paper is counted once even when the edge appears from multiple sources.
+  - Cross-paper citations are intentionally not deduplicated because they are real incoming impact evidence.
+  - Verification passed: normalize tests `8 passed`, full test suite `544 passed`, and `scripts/check_publish_ready.sh` passed.
 - Model credibility evidence card:
   - Added `configs/model_credibility/local-impact-judge-source-task-dpo.json`, a publishable summary of the recommended judge's three-seed SciImpact credibility evidence.
   - The profile records pooled accuracy `0.658889`, min-seed accuracy `0.646667`, `900` covered examples, `moderate_credibility`, grade `B`, significant-above-random support, and weak slices such as `dataset`, `stars`, `github_repo`, `downloads`, and `patent`.
@@ -890,3 +1041,13 @@
   - The section explicitly shows `can_claim_high_model_credibility=false`, so the model is treated as benchmark-supported but not a high-credibility standalone oracle.
   - `scripts/run_deliverable_check.sh` now verifies the model credibility section in the user-impact summary.
   - Verified replay output at `/tmp/local-impact-user-impact-model-credibility` and full deliverable output at `/tmp/local-impact-deliverable-model-credibility`.
+- User 100-paper multi-source citation replay:
+  - Implemented true-citation multi-source resolution in `impact_fusion.py`.
+  - Added CSV/JSONL audit fields for OpenAlex, Semantic Scholar, PubMed/iCite, OpenCitations, Crossref, supplied count, source counts, agreement, and conflict flags.
+  - Generated merged scoring input: `runs/data-100-verification/papers.enriched.multi_source.jsonl`.
+  - Replayed existing saved pairwise judgments without GPU:
+    - `runs/data-100-verification/user-impact-model-p200-multisource-replay/model-impact/impact_scores.csv`
+    - `runs/data-100-verification/user-impact-model-p200-multisource-replay/model-impact/model_impact_report.md`
+    - `runs/data-100-verification/user-impact-model-p200-multisource-replay/model-impact/report_bundle`
+  - Result before later identity guarding: 85 scored article records, 200 saved judgments reused, 5 nonzero true-citation papers, 80 known-zero papers across queried open sources.
+  - Focused verification passed: `tests/test_impact_fusion.py` and `test_model_score_dataset_writes_fused_impact_index_v2_components`.

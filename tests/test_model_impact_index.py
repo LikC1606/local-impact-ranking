@@ -1,3 +1,4 @@
+import csv
 import json
 import pytest
 import threading
@@ -8,6 +9,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import local_impact_ranking.cli as cli
+import local_impact_ranking.model_impact_index as model_impact_index_module
 from local_impact_ranking.cli import app
 from local_impact_ranking.impact_fusion import compute_impact_index_v2
 from local_impact_ranking.model_impact_index import (
@@ -801,6 +803,37 @@ def test_pairwise_comparison_plan_connects_coverage_prefix_before_balancing():
     assert _connected_component_count_from_plan(plan) == 1
 
 
+def test_pairwise_comparison_plan_respects_budget_without_all_pair_materialization(
+    monkeypatch,
+):
+    papers = [paper(f"p{i}", f"Paper {i}") for i in range(1, 101)]
+
+    def fail_if_all_pairs_are_requested(*_args, **_kwargs):
+        raise AssertionError("pairwise plan must not materialize all paper pairs")
+
+    monkeypatch.setattr(
+        model_impact_index_module,
+        "combinations",
+        fail_if_all_pairs_are_requested,
+        raising=False,
+    )
+
+    plan = pairwise_comparison_plan(
+        papers,
+        max_pairs=50,
+        pair_sampling="coverage",
+    )
+
+    compared_ids = {
+        item["paper_a"].paper_id for item in plan
+    } | {
+        item["paper_b"].paper_id for item in plan
+    }
+    assert len(plan) == 50
+    assert len(compared_ids) == 100
+    assert [item["pair_index"] for item in plan] == list(range(1, 51))
+
+
 def _connected_component_count_from_plan(plan):
     adjacency = {}
     for item in plan:
@@ -902,13 +935,18 @@ def test_model_score_dataset_writes_direct_scores_when_enabled(tmp_path):
     assert report["summary"]["direct_score_quality"]["status"] == "usable"
     assert report["summary"]["judgment_count"] == 3
     assert report["summary"]["parseable_rate"] == 1.0
-    assert report["rankings"][0]["paper_id"] == "p2"
-    assert report["rankings"][0]["impact_index"] == 100.0
-    assert report["rankings"][0]["direct_score"] == 94.0
-    assert "coverage_confidence" in report["rankings"][0]
-    assert "mean_pairwise_confidence" in report["rankings"][0]
-    assert report["rankings"][-1]["paper_id"] == "p3"
-    assert report["rankings"][-1]["direct_score"] == 12.0
+    by_id = {row["paper_id"]: row for row in report["rankings"]}
+    assert report["rankings"][0]["paper_id"] == "p1"
+    assert by_id["p2"]["impact_index"] == 100.0
+    assert by_id["p2"]["direct_score"] == 94.0
+    assert by_id["p2"]["final_impact_score"] == 0.0
+    assert by_id["p2"]["final_score_missing_signals"] == [
+        "true_citation",
+        "effective_citation",
+    ]
+    assert "coverage_confidence" in by_id["p2"]
+    assert "mean_pairwise_confidence" in by_id["p2"]
+    assert by_id["p3"]["direct_score"] == 12.0
     assert (output_dir / "direct_scores.csv").exists()
     assert (output_dir / "direct_scores.jsonl").exists()
     assert (output_dir / "impact_scores.csv").exists()
@@ -920,6 +958,52 @@ def test_model_score_dataset_writes_direct_scores_when_enabled(tmp_path):
     )
     assert "Coverage Confidence" in report_markdown
     assert "Mean Pairwise Confidence" in report_markdown
+
+
+def test_model_score_dataset_sanitizes_formula_like_csv_cells(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "impact"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "paper_id": "p1",
+                        "title": '=HYPERLINK("http://example.test","paper")',
+                        "references": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "paper_id": "p2",
+                        "title": "Ordinary paper",
+                        "references": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    model_score_dataset(
+        input_path,
+        output_dir,
+        base_url="http://localhost:8000/v1",
+        model="local-impact",
+        client=DirectScoreClient({"p1": 55, "p2": 44}),
+        direct_score=True,
+        max_pairs=0,
+    )
+
+    with (output_dir / "impact_scores.csv").open(newline="", encoding="utf-8") as handle:
+        impact_rows = list(csv.DictReader(handle))
+    with (output_dir / "direct_scores.csv").open(newline="", encoding="utf-8") as handle:
+        direct_rows = list(csv.DictReader(handle))
+
+    assert impact_rows[0]["title"].startswith("'=HYPERLINK")
+    assert direct_rows[0]["title"].startswith("'=HYPERLINK")
+    assert impact_rows[1]["title"] == "Ordinary paper"
 
 
 def test_model_score_dataset_writes_fused_impact_index_v2_components(tmp_path):
@@ -988,16 +1072,45 @@ def test_model_score_dataset_writes_fused_impact_index_v2_components(tmp_path):
     )
 
     assert report["summary"]["fusion_scoring_enabled"] is True
-    assert report["summary"]["scoring_method"] == "impact_index_v3_evidence_first"
+    assert report["summary"]["scoring_method"] == "true_effective_citation_impact_v1"
+    assert report["summary"]["legacy_scoring_method"] == "impact_index_v3_evidence_first"
     assert report["summary"]["model_pairwise_scoring_method"] == "rank_centrality_v1"
     assert report["summary"]["pairwise_stability"]["samples"] == 30
     assert report["summary"]["pairwise_stability"]["tracked_paper_count"] == 2
     assert report["summary"]["final_score_stability"]["samples"] == 30
     assert report["summary"]["final_score_stability"]["tracked_paper_count"] == 2
-    assert report["summary"]["fusion"]["version"] == "impact_index_v3_evidence_first"
+    assert report["summary"]["fusion"]["version"] == "true_effective_citation_impact_v1"
+    assert report["summary"]["fusion"]["legacy_fusion_version"] == "impact_index_v3_evidence_first"
     assert "evidence_signal_audit" in report["summary"]["fusion"]["evidence_first"]
     assert "impact_index_v3" in report["rankings"][0]
     assert "impact_index_v2" in report["rankings"][0]
+    assert "true_citation_score" in report["rankings"][0]
+    assert "true_citation_raw" in report["rankings"][0]
+    assert "true_citation_source" in report["rankings"][0]
+    assert "true_citation_openalex_raw" in report["rankings"][0]
+    assert "true_citation_semantic_scholar_raw" in report["rankings"][0]
+    assert "true_citation_crossref_raw" in report["rankings"][0]
+    assert "true_citation_crossref_data_citations_raw" in report["rankings"][0]
+    assert "true_citation_europepmc_raw" in report["rankings"][0]
+    assert "true_citation_ncbi_pubmed_raw" in report["rankings"][0]
+    assert "true_citation_datacite_raw" in report["rankings"][0]
+    assert "true_citation_datacite_events_raw" in report["rankings"][0]
+    assert "true_citation_openaire_raw" in report["rankings"][0]
+    assert "true_citation_wikidata_raw" in report["rankings"][0]
+    assert "true_citation_source_count" in report["rankings"][0]
+    assert "true_citation_source_conflict_flag" in report["rankings"][0]
+    assert "true_citation_identity_status" in report["rankings"][0]
+    assert "true_citation_identity_similarity" in report["rankings"][0]
+    assert "true_citation_identity_external_title" in report["rankings"][0]
+    assert "true_citation_identity_reason" in report["rankings"][0]
+    assert "effective_citation_score" in report["rankings"][0]
+    assert "final_score_method" in report["rankings"][0]
+    assert "score_95_true_05_effective" in report["rankings"][0]
+    assert "score_90_true_10_effective" in report["rankings"][0]
+    assert "score_50_true_50_effective" in report["rankings"][0]
+    assert "score_70_true_30_effective" in report["rankings"][0]
+    assert "score_80_true_20_effective" in report["rankings"][0]
+    assert "score_30_true_70_effective" in report["rankings"][0]
     assert "credibility_adjusted_impact_score" in report["rankings"][0]
     assert "credibility_adjustment_factor" in report["rankings"][0]
     assert "evidence_supported_score" in report["rankings"][0]
@@ -1037,6 +1150,12 @@ def test_model_score_dataset_writes_fused_impact_index_v2_components(tmp_path):
     impact_csv = (output_dir / "impact_scores.csv").read_text(encoding="utf-8")
     assert "impact_index_v3" in impact_csv
     assert "impact_index_v2" in impact_csv
+    assert "score_95_true_05_effective" in impact_csv
+    assert "score_90_true_10_effective" in impact_csv
+    assert "score_50_true_50_effective" in impact_csv
+    assert "score_70_true_30_effective" in impact_csv
+    assert "score_80_true_20_effective" in impact_csv
+    assert "score_30_true_70_effective" in impact_csv
     assert "credibility_adjusted_impact_score" in impact_csv
     assert "credibility_adjustment_factor" in impact_csv
     assert "evidence_supported_score" in impact_csv
@@ -1051,6 +1170,22 @@ def test_model_score_dataset_writes_fused_impact_index_v2_components(tmp_path):
     assert "bip_impact_score" in impact_csv
     assert "pairwise_aggregation_method" in impact_csv
     assert "credible_evidence_tier" in impact_csv
+    assert "true_citation_openalex_raw" in impact_csv
+    assert "true_citation_semantic_scholar_raw" in impact_csv
+    assert "true_citation_crossref_raw" in impact_csv
+    assert "true_citation_crossref_data_citations_raw" in impact_csv
+    assert "true_citation_europepmc_raw" in impact_csv
+    assert "true_citation_ncbi_pubmed_raw" in impact_csv
+    assert "true_citation_datacite_raw" in impact_csv
+    assert "true_citation_datacite_events_raw" in impact_csv
+    assert "true_citation_openaire_raw" in impact_csv
+    assert "true_citation_wikidata_raw" in impact_csv
+    assert "true_citation_source_count" in impact_csv
+    assert "true_citation_source_conflict_flag" in impact_csv
+    assert "true_citation_identity_status" in impact_csv
+    assert "true_citation_identity_similarity" in impact_csv
+    assert "true_citation_identity_external_title" in impact_csv
+    assert "true_citation_identity_reason" in impact_csv
     assert "fusion_weight_model_pairwise" in impact_csv
     assert "score_ci_low" in impact_csv
     assert "reportability_status" in impact_csv
@@ -1066,12 +1201,13 @@ def test_model_score_dataset_writes_fused_impact_index_v2_components(tmp_path):
         encoding="utf-8"
     )
     assert "Impact Index v3" in report_markdown
-    assert "credibility-adjusted" in report_markdown
+    assert "only two categories" in report_markdown
+    assert "true_citation_score" in report_markdown
     assert "rank_centrality_v1" in report_markdown
-    assert "Evidence Score" in report_markdown
+    assert "True Citation" in report_markdown
     assert "Relative Citation" in report_markdown
     assert "Influential Citation" in report_markdown
-    assert "BIP" in report_markdown
+    assert "External Adoption" in report_markdown
     assert "fusion.version" in report_markdown
     assert "fusion.evidence_first.high_or_better_rate" in report_markdown
     assert "pairwise_stability.status" in report_markdown
@@ -1530,26 +1666,40 @@ def test_model_score_dataset_writes_external_evidence_readiness_artifacts(tmp_pa
     readiness_json = output_dir / "external_evidence_readiness.json"
     readiness_md = output_dir / "external_evidence_readiness.md"
     coverage_csv = output_dir / "external_evidence_paper_coverage.csv"
+    citation_completeness_json = output_dir / "citation_completeness_audit.json"
+    citation_completeness_md = output_dir / "citation_completeness_audit.md"
+    citation_completeness_csv = output_dir / "citation_completeness_papers.csv"
     assert readiness_json.exists()
     assert readiness_md.exists()
     assert coverage_csv.exists()
+    assert citation_completeness_json.exists()
+    assert citation_completeness_md.exists()
+    assert citation_completeness_csv.exists()
     readiness = json.loads(readiness_json.read_text(encoding="utf-8"))
+    citation_completeness = json.loads(
+        citation_completeness_json.read_text(encoding="utf-8")
+    )
     assert report["summary"]["external_evidence_readiness"]["decision"]["status"] in {
         "ready_for_high_credibility_scoring",
         "usable_with_disclosure",
     }
+    assert report["summary"]["citation_completeness_audit"]["summary"]["paper_count"] == 2
     assert readiness["graph_evidence"]["materialized_internal_edge_count"] == 1
+    assert citation_completeness["summary"]["citation_evidence_coverage"] == 1.0
     report_payload = json.loads(
         (output_dir / "model_impact_report.json").read_text(encoding="utf-8")
     )
     assert "external_evidence_readiness" in report_payload["summary"]
+    assert "citation_completeness_audit" in report_payload["summary"]
     report_markdown = (output_dir / "model_impact_report.md").read_text(
         encoding="utf-8"
     )
     assert "External Evidence Readiness" in report_markdown
+    assert "Citation Completeness Audit" in report_markdown
     assert "external_query_id_coverage" in report_markdown
     assert "papers_with_any_missing_evidence" in report_markdown
     assert "missing_evidence" in coverage_csv.read_text(encoding="utf-8")
+    assert "completeness_grade" in citation_completeness_csv.read_text(encoding="utf-8")
 
 
 def test_model_score_dataset_can_write_impact_validity_evaluation(tmp_path):

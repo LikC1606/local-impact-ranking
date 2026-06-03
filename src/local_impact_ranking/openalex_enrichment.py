@@ -9,8 +9,13 @@ from urllib.parse import quote
 
 import httpx
 
+from local_impact_ranking.enrichment_resume import (
+    resume_rows_by_paper_id,
+    write_jsonl_atomic,
+)
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import Paper
+from local_impact_ranking.normalize import normalize_doi
 
 
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
@@ -22,9 +27,12 @@ def enrich_papers_with_openalex(
     *,
     email: str | None = None,
     timeout: float = 30.0,
+    resume: bool = False,
     client: Any | None = None,
 ) -> dict[str, Any]:
     papers = load_papers_jsonl(input_path)
+    destination = Path(output_path)
+    resumed_rows = resume_rows_by_paper_id(destination) if resume else {}
     owns_client = client is None
     http_client = client or httpx.Client(timeout=timeout)
     rows = []
@@ -36,10 +44,17 @@ def enrich_papers_with_openalex(
         "title_query_count": 0,
         "title_match_count": 0,
         "title_rejected_count": 0,
+        "resume": resume,
+        "resumed_count": 0,
         "source": "openalex",
     }
     try:
         for paper in papers:
+            resumed_row = resumed_rows.get(paper.paper_id)
+            if resumed_row is not None:
+                rows.append(resumed_row)
+                summary["resumed_count"] += 1
+                continue
             record = paper.model_dump(mode="json", exclude_none=True)
             query = _openalex_query_for_paper(paper)
             if query is None:
@@ -64,11 +79,7 @@ def enrich_papers_with_openalex(
         if owns_client and hasattr(http_client, "close"):
             http_client.close()
 
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl_atomic(destination, rows)
     summary["output_path"] = str(destination)
     return summary
 
@@ -182,10 +193,7 @@ def _normalize_openalex_work_id(value: str) -> str:
 
 
 def _normalize_doi(value: str) -> str:
-    normalized = value.strip()
-    if normalized.startswith("https://doi.org/"):
-        normalized = normalized.removeprefix("https://doi.org/")
-    return normalized
+    return normalize_doi(value)
 
 
 def _is_title_queryable(paper: Paper) -> bool:

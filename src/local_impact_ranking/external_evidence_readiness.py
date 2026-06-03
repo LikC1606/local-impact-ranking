@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 from typing import Any, Callable
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.models import Paper
 from local_impact_ranking.openalex_enrichment import paper_doi
 
@@ -403,10 +404,12 @@ def write_external_evidence_paper_coverage_csv(
         writer.writeheader()
         for row in rows:
             writer.writerow(
-                {
-                    field: _csv_value(row.get(field))
-                    for field in PAPER_COVERAGE_FIELDS
-                }
+                sanitize_csv_row(
+                    {
+                        field: _csv_value(row.get(field))
+                        for field in PAPER_COVERAGE_FIELDS
+                    }
+                )
             )
 
 

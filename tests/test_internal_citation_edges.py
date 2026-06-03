@@ -1,5 +1,6 @@
 import json
 
+import local_impact_ranking.internal_citation_edges as internal_edges
 from local_impact_ranking.internal_citation_edges import (
     materialize_internal_citation_edges,
 )
@@ -118,6 +119,241 @@ def test_materialize_internal_citation_edges_matches_references_by_strict_title(
     assert papers["p2"].references[0].reference_id == "p1"
     assert summary["materialized_internal_edge_count"] == 1
     assert summary["title_match_count"] == 1
+
+
+def test_materialize_internal_citation_edges_uses_index_for_exact_title_matches(
+    tmp_path, monkeypatch
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.internal.jsonl"
+    records = [
+        {
+            "paper_id": "target",
+            "title": "High resolution mapping of immune cell lineage plasticity in tumors",
+            "references": [],
+        },
+        {
+            "paper_id": "citing",
+            "title": "A citing paper",
+            "references": [
+                {
+                    "title": (
+                        "High-resolution mapping of immune cell lineage plasticity "
+                        "in tumors"
+                    )
+                }
+            ],
+        },
+    ]
+    for index in range(300):
+        records.append(
+            {
+                "paper_id": f"decoy-{index}",
+                "title": f"Unrelated decoy manuscript with synthetic marker {index}",
+                "references": [],
+            }
+        )
+    _write_jsonl(input_path, records)
+
+    call_count = 0
+    original_similarity = internal_edges._title_similarity
+
+    def counting_similarity(left, right):
+        nonlocal call_count
+        call_count += 1
+        return original_similarity(left, right)
+
+    monkeypatch.setattr(internal_edges, "_title_similarity", counting_similarity)
+
+    summary = materialize_internal_citation_edges(input_path, output_path)
+
+    papers = {paper.paper_id: paper for paper in load_papers_jsonl(output_path)}
+    assert papers["citing"].references[0].reference_id == "target"
+    assert summary["materialized_internal_edge_count"] == 1
+    assert call_count <= 2
+
+
+def test_materialize_internal_citation_edges_blocks_fuzzy_title_candidates(
+    tmp_path, monkeypatch
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.internal.jsonl"
+    records = [
+        {
+            "paper_id": "target",
+            "title": (
+                "Single cell atlas of inflammatory fibroblast activation "
+                "in pancreatic cancer"
+            ),
+            "references": [],
+        },
+        {
+            "paper_id": "citing",
+            "title": "A citing paper",
+            "references": [
+                {
+                    "title": (
+                        "Single cell atlas of inflammatory fibroblast activation "
+                        "in pancreas cancer"
+                    )
+                }
+            ],
+        },
+    ]
+    for index in range(300):
+        records.append(
+            {
+                "paper_id": f"decoy-{index}",
+                "title": f"Background report for unrelated engineering benchmark {index}",
+                "references": [],
+            }
+        )
+    _write_jsonl(input_path, records)
+
+    call_count = 0
+    original_similarity = internal_edges._title_similarity
+
+    def counting_similarity(left, right):
+        nonlocal call_count
+        call_count += 1
+        return original_similarity(left, right)
+
+    monkeypatch.setattr(internal_edges, "_title_similarity", counting_similarity)
+
+    summary = materialize_internal_citation_edges(
+        input_path,
+        output_path,
+        title_threshold=0.9,
+    )
+
+    papers = {paper.paper_id: paper for paper in load_papers_jsonl(output_path)}
+    assert papers["citing"].references[0].reference_id == "target"
+    assert summary["materialized_internal_edge_count"] == 1
+    assert call_count <= 16
+
+
+def test_materialize_internal_citation_edges_uses_phrase_blocks_for_common_tokens(
+    tmp_path, monkeypatch
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.internal.jsonl"
+    records = [
+        {
+            "paper_id": "target",
+            "title": (
+                "Single cell atlas of inflammatory fibroblast activation "
+                "in pancreatic cancer"
+            ),
+            "references": [],
+        },
+        {
+            "paper_id": "citing",
+            "title": "A citing paper",
+            "references": [
+                {
+                    "title": (
+                        "Single cell atlas of inflammatory fibroblast activation "
+                        "in pancreas cancer"
+                    )
+                }
+            ],
+        },
+    ]
+    for index in range(300):
+        records.append(
+            {
+                "paper_id": f"decoy-{index}",
+                "title": (
+                    "Inflammatory cancer atlas single fibroblast activation "
+                    f"cell benchmark {index}"
+                ),
+                "references": [],
+            }
+        )
+    _write_jsonl(input_path, records)
+
+    call_count = 0
+    original_similarity = internal_edges._title_similarity
+
+    def counting_similarity(left, right):
+        nonlocal call_count
+        call_count += 1
+        return original_similarity(left, right)
+
+    monkeypatch.setattr(internal_edges, "_title_similarity", counting_similarity)
+
+    summary = materialize_internal_citation_edges(
+        input_path,
+        output_path,
+        title_threshold=0.9,
+    )
+
+    papers = {paper.paper_id: paper for paper in load_papers_jsonl(output_path)}
+    assert papers["citing"].references[0].reference_id == "target"
+    assert summary["materialized_internal_edge_count"] == 1
+    assert call_count <= 16
+
+
+def test_materialize_internal_citation_edges_skips_overloaded_phrase_blocks(
+    tmp_path, monkeypatch
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.internal.jsonl"
+    records = [
+        {
+            "paper_id": "target",
+            "title": (
+                "Single cell atlas of inflammatory fibroblast activation "
+                "in pancreatic cancer raremarker"
+            ),
+            "references": [],
+        },
+        {
+            "paper_id": "citing",
+            "title": "A citing paper",
+            "references": [
+                {
+                    "title": (
+                        "Single cell atlas of inflammatory fibroblast activation "
+                        "in pancreas cancer raremarker"
+                    )
+                }
+            ],
+        },
+    ]
+    for index in range(300):
+        records.append(
+            {
+                "paper_id": f"decoy-{index}",
+                "title": (
+                    "Single cell atlas of inflammatory fibroblast activation "
+                    f"in unrelated cancer decoymarker{index}"
+                ),
+                "references": [],
+            }
+        )
+    _write_jsonl(input_path, records)
+
+    call_count = 0
+    original_similarity = internal_edges._title_similarity
+
+    def counting_similarity(left, right):
+        nonlocal call_count
+        call_count += 1
+        return original_similarity(left, right)
+
+    monkeypatch.setattr(internal_edges, "_title_similarity", counting_similarity)
+
+    summary = materialize_internal_citation_edges(
+        input_path,
+        output_path,
+        title_threshold=0.9,
+    )
+
+    papers = {paper.paper_id: paper for paper in load_papers_jsonl(output_path)}
+    assert papers["citing"].references[0].reference_id == "target"
+    assert summary["materialized_internal_edge_count"] == 1
+    assert call_count <= 16
 
 
 def test_materialize_internal_citation_edges_rejects_weak_title_matches(tmp_path):

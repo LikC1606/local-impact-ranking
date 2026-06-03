@@ -215,9 +215,43 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert "PAIRWISE_JUDGMENTS" in script
     assert "RESUME_PAIRWISE_JUDGMENTS" in script
     assert "VALIDITY_LABELS" in script
+    assert "AUTO_ENRICH=0|1" in script
+    assert "AUTO_ENRICH_SOURCES=openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire" in script
     assert 'BASE_URL="${BASE_URL:-http://localhost:8000/v1}"' in script
     assert 'MODEL="${MODEL:-local-impact-judge-source-task-dpo}"' in script
     assert 'RUN_PRESET="${RUN_PRESET:-custom}"' in script
+    assert 'AUTO_ENRICH="${AUTO_ENRICH:-0}"' in script
+    assert 'AUTO_ENRICH_SOURCES="${AUTO_ENRICH_SOURCES:-openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire}"' in script
+    assert 'AUTO_ENRICH_TIMEOUT="${AUTO_ENRICH_TIMEOUT:-30}"' in script
+    assert 'SCORING_INPUT="${INPUT}"' in script
+    assert 'AUTO_ENRICH_OUTPUT="${OUTPUT}/auto-enrich"' in script
+    assert 'enrich-openalex' in script
+    assert 'enrich-europepmc' in script
+    assert 'recover-external-identities' in script
+    assert 'enrich-crossref' in script
+    assert 'enrich-crossref-data-citations' in script
+    assert 'enrich-icite' in script
+    assert 'enrich-ncbi-citations' in script
+    assert 'enrich-opencitations' in script
+    assert 'enrich-semantic-scholar' in script
+    assert 'enrich-datacite' in script
+    assert 'enrich-datacite-events' in script
+    assert 'enrich-openaire' in script
+    assert 'enrich-plos-metrics' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.openalex.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.europepmc.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.identity_recovered.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.crossref.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.crossref_data_citations.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.icite.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.ncbi_citations.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.opencitations.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.semantic_scholar.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.datacite.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.datacite_events.jsonl"' in script
+    assert 'next_input="${AUTO_ENRICH_OUTPUT}/papers.openaire.jsonl"' in script
+    assert 'SCORING_INPUT="${auto_enrich_current_input}"' in script
+    assert '"${SCORING_INPUT}"' in script
     assert '"quick")' in script
     assert '"balanced")' in script
     assert '"full")' in script
@@ -228,6 +262,30 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert 'BIDIRECTIONAL_PAIRWISE="${BIDIRECTIONAL_PAIRWISE:-1}"' in script
     assert 'CALIBRATION_REPORT="${CALIBRATION_REPORT:-configs/calibration/sciimpact-qwen32b-heldout-p50.json}"' in script
     assert 'MODEL_CREDIBILITY_REPORT="${MODEL_CREDIBILITY_REPORT:-configs/model_credibility/local-impact-judge-source-task-dpo.json}"' in script
+    assert 'AUTO_ENRICH="${AUTO_ENRICH:-0}"' in script
+    assert 'AUTO_ENRICH_SOURCES="${AUTO_ENRICH_SOURCES:-openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire}"' in script
+    assert 'AUTO_ENRICH_TIMEOUT="${AUTO_ENRICH_TIMEOUT:-30}"' in script
+    assert 'enrich-openalex' in script
+    assert 'enrich-europepmc' in script
+    assert 'recover-external-identities' in script
+    assert 'enrich-crossref' in script
+    assert 'enrich-crossref-data-citations' in script
+    assert 'enrich-icite' in script
+    assert 'enrich-ncbi-citations' in script
+    assert 'enrich-opencitations' in script
+    assert 'enrich-semantic-scholar' in script
+    assert 'enrich-datacite' in script
+    assert 'enrich-datacite-events' in script
+    assert 'enrich-openaire' in script
+    assert 'enrich-plos-metrics' in script
+    assert '--input "${SCORING_INPUT}"' in script
+    assert 'auto_enrich_enabled = sys.argv[8] == "1"' in script
+    assert 'auto_enrich_sources = [source for source in sys.argv[9].split(",") if source]' in script
+    assert '"auto_enrich_input": sys.argv[2]' in script
+    assert '"scoring_input": scoring_input' in script
+    assert "Auto Enrichment" in script
+    assert "auto_enrich" in script
+    assert "scoring_input" in script
     assert 'scripts/check_model_server.sh "${BASE_URL}"' in script
     assert "validate" in script
     assert "model-score-preflight" in script
@@ -239,6 +297,8 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert 'test -s "${OUTPUT}/validation/validation.json"' in script
     assert 'test -s "${OUTPUT}/preflight/model_score_preflight.json"' in script
     assert 'test -s "${OUTPUT}/model-impact/impact_scores.csv"' in script
+    assert 'test -s "${OUTPUT}/model-impact/citation_completeness_audit.md"' in script
+    assert 'test -s "${OUTPUT}/model-impact/citation_completeness_papers.csv"' in script
     assert 'test -s "${OUTPUT}/model-impact/impact_claim_certificate.md"' in script
     assert 'test -s "${OUTPUT}/model-impact/report_bundle/bundle_manifest.json"' in script
     assert 'grep -q "validated_impact_claim.status" "${OUTPUT}/model-impact/model_impact_report.md"' in script
@@ -266,6 +326,12 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert "disclose or fix them" not in script
     assert "Validation Issues" in script
     assert "Internal Citation Graph Audit" in script
+    assert "Citation Completeness Audit" in script
+    assert "citation_completeness_audit" in script
+    assert "citation_evidence_coverage" in script
+    assert "multi_source_coverage" in script
+    assert "papers_with_source_conflict" in script
+    assert "papers_without_query_ids" in script
     assert "internal_citation_audit_coverage" in script
     assert "openalex_reference_audit_coverage" in script
     assert 'preflight_args+=(--resume-pairwise-judgments "${PAIRWISE_JUDGMENTS}")' in script
@@ -273,6 +339,12 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert "preflight_pair_plan_quality_status" in script
     assert "preflight_pair_plan_connected_component_count" in script
     assert "run_preset" in script
+    assert "auto_enrich_enabled" in script
+    assert "auto_enrich_sources" in script
+    assert "auto_enrich_input" in script
+    assert "scoring_input" in script
+    assert "auto_enrich_output" in script
+    assert "Auto Enrichment" in script
     assert "Model Credibility" in script
     assert "model_credibility_status" in script
     assert "model_credibility_card" in script
@@ -296,8 +368,8 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert "low_confidence_paper_count" in script
     assert "Positive Evidence Signals" in script
     assert "Zero Evidence Signals" in script
-    assert 'PAIRWISE_STABILITY_SAMPLES="${PAIRWISE_STABILITY_SAMPLES:-80}"' in script
-    assert 'FINAL_SCORE_STABILITY_SAMPLES="${FINAL_SCORE_STABILITY_SAMPLES:-80}"' in script
+    assert 'PAIRWISE_STABILITY_SAMPLES="${PAIRWISE_STABILITY_SAMPLES:-0}"' in script
+    assert 'FINAL_SCORE_STABILITY_SAMPLES="${FINAL_SCORE_STABILITY_SAMPLES:-0}"' in script
     assert "--pairwise-stability-samples" in script
     assert "--pairwise-stability-top-n" in script
     assert "--pairwise-stability-seed" in script
@@ -310,6 +382,16 @@ def test_run_user_impact_script_scores_user_dataset_with_model_and_bundle():
     assert "Final Score Stability" in script
     assert 'test -s "${OUTPUT}/model-impact/pairwise_stability.md"' in script
     assert 'test -s "${OUTPUT}/model-impact/final_score_stability.md"' in script
+
+
+def test_run_user_impact_auto_enrich_uses_distinct_outputs_for_repeated_sources():
+    script = Path("scripts/run_user_impact.sh").read_text(encoding="utf-8")
+
+    assert "declare -A auto_enrich_source_counts=()" in script
+    assert 'source_count="${auto_enrich_source_counts[${source}]:-0}"' in script
+    assert 'source_count=$((source_count + 1))' in script
+    assert 'papers.europepmc.${source_count}.jsonl' in script
+    assert 'europepmc_${source_count}_summary.json' in script
 
 
 def test_run_deliverable_check_script_runs_required_and_optional_delivery_paths():
@@ -558,6 +640,28 @@ def test_download_scicite_script_downloads_extracts_and_converts_splits():
     assert 'for split in train dev test; do' in script
     assert 'benchmarks convert-scicite' in script
     assert '${split}.papers.jsonl' in script
+
+
+def test_apply_high_recall_evidence_script_imports_audits_and_optionally_replays():
+    script = Path("scripts/apply_high_recall_evidence.sh").read_text(encoding="utf-8")
+
+    assert 'INPUT="${1:?Usage: scripts/apply_high_recall_evidence.sh INPUT_JSONL EVIDENCE_CSV [OUTPUT_DIR]}"' in script
+    assert 'EVIDENCE="${2:?Usage: scripts/apply_high_recall_evidence.sh INPUT_JSONL EVIDENCE_CSV [OUTPUT_DIR]}"' in script
+    assert 'OUTPUT="${3:-runs/high-recall-evidence}"' in script
+    assert "import-external-evidence" in script
+    assert "--evidence" in script
+    assert "citation-completeness-audit" in script
+    assert 'CITATION_COMPLETENESS_BEFORE_OUTPUT="${OUTPUT}/citation-completeness-before"' in script
+    assert 'PAIRWISE_JUDGMENTS="${PAIRWISE_JUDGMENTS:-}"' in script
+    assert 'if [[ -n "${PAIRWISE_JUDGMENTS}" ]]; then' in script
+    assert "model-score-dataset" in script
+    assert "--pairwise-judgments" in script
+    assert "--report-bundle" in script
+    assert 'test -s "${OUTPUT}/import_summary.json"' in script
+    assert 'test -s "${OUTPUT}/citation-completeness-before/citation_completeness_audit.json"' in script
+    assert 'test -s "${OUTPUT}/citation-completeness/citation_completeness_audit.json"' in script
+    assert '"citation_completeness_delta":' in script
+    assert 'STATUS_PATH="${OUTPUT}/high_recall_external_evidence_status.json"' in script
 
 
 def test_check_publish_ready_script_blocks_local_outputs_and_runs_tests():

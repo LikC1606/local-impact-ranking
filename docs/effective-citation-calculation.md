@@ -4,7 +4,7 @@ This document defines how `effective_citation_*` fields are calculated. The purp
 
 ## Definition
 
-An effective citation is an incoming citation from another paper in the supplied dataset that has an explicit role stronger than a generic background mention.
+An effective citation is an incoming citation from another paper in the supplied dataset that has either an explicit role stronger than a generic background mention or a constrained ImpactRankings-style local-model selection marking it as a key reference.
 
 The unit is an internal citation edge:
 
@@ -12,7 +12,7 @@ The unit is an internal citation edge:
 citing_paper.references[].reference_id == cited_paper.paper_id
 ```
 
-The scorer then looks for `citation_contexts` on the citing paper whose `reference_id` matches the cited paper.
+The scorer then looks for `citation_contexts` on the citing paper whose `reference_id` matches the cited paper. It can also consume constrained local-model selections from `metadata.impact_selected_references`; those selections are only accepted when the selected `reference_id` exists in the citing paper's real `references` list and in the supplied dataset.
 
 ## Input Requirements
 
@@ -83,6 +83,28 @@ Supported explicit label values:
 - `background`
 - `negative`
 
+ImpactRankings-style local-model evidence can be supplied in the citing paper metadata:
+
+```json
+{
+  "paper_id": "trial",
+  "title": "Clinical trial using prior assay",
+  "references": [{"reference_id": "assay", "title": "Reusable biomarker assay"}],
+  "metadata": {
+    "impact_selected_references": [
+      {
+        "reference_id": "assay",
+        "rank": 1,
+        "confidence": 0.82,
+        "valid": true
+      }
+    ]
+  }
+}
+```
+
+Compatible metadata keys are `impact_selected_references`, `impactrankings_selected_references`, `llm_selected_references`, `model_selected_references`, `judge_selected_references`, and `selected_references`. Invalid selections, hallucinated IDs, and IDs that are not actual references of the citing paper are ignored.
+
 ## Role Classification
 
 Each citation context is assigned one or more roles. If an explicit role label exists, it is used first. Otherwise, rule-based cue matching is applied to the context's `section`, `sentence`, and `paragraph`.
@@ -102,7 +124,7 @@ For life sciences, `biomarker` alone is intentionally not enough to trigger `cli
 
 ## Per-Edge Credit
 
-Each internal citation edge receives at most one primary credit, using the strongest role observed on that edge:
+Each internal citation edge receives at most one primary credit. When only citation-context evidence exists, the edge uses the strongest role observed on that edge:
 
 ```text
 edge_effective_weight = max(role_weight(context_roles_for_edge))
@@ -115,7 +137,14 @@ edge_effective_weight = 0.10
 edge_role = unknown
 ```
 
-This cap prevents a paper from receiving inflated credit just because the same citing paper has many citation-context sentences.
+When constrained local-model key-reference evidence exists for the same edge, the edge uses the larger of the context-role weight and the ImpactRankings-style rank weight:
+
+```text
+edge_effective_weight =
+  max(context_role_weight, impact_selected_reference_weight)
+```
+
+Top-5 model selections use rank weights `1.0`, `0.8`, `0.6`, `0.4`, and `0.2`. Ranks 6-20 receive a smaller log-discounted weight. This per-edge max rule prevents a paper from receiving inflated credit just because the same citing paper has many citation-context sentences or both context and model-selection evidence.
 
 ## Per-Paper Raw Score
 
@@ -123,7 +152,8 @@ For each cited paper:
 
 ```text
 effective_citation_raw =
-  sum(edge_effective_weight for all incoming internal citation edges)
+  sum(max(context_role_weight, impact_selected_reference_weight)
+      for all incoming internal citation edges)
 ```
 
 Example:
@@ -138,7 +168,7 @@ effective_citation_raw = 3.95
 
 ## Per-Paper Effective Citation Count
 
-`effective_citation_count` counts incoming edges with at least one strong role:
+`effective_citation_count` counts incoming edges with at least one strong context role or a constrained top-5 local-model key-reference selection:
 
 ```text
 strong roles =
@@ -148,6 +178,7 @@ strong roles =
   dataset_or_tool
   negative_or_contrasting
   supporting
+  top_5_impact_selected_reference
 ```
 
 Background-only and unknown edge-only citations are recorded but do not increase `effective_citation_count`.
@@ -178,7 +209,15 @@ This means:
 - Ties receive the same percentile.
 - Missing or zero raw evidence receives 0.
 
-`effective_citation_score` is written for audit and score cards. The same raw signal backs `citation_context_quality_score`, which is one component of the evidence-first `impact_index_v3`.
+`effective_citation_score` is one of the two inputs to the final paper impact score:
+
+```text
+final_impact_score =
+  0.95 * true_citation_score
++ 0.05 * effective_citation_score
+```
+
+The output also records sensitivity fields with `1.00/0.00`, `0.95/0.05`, `0.90/0.10`, `0.80/0.20`, `0.70/0.30`, `0.50/0.50`, and `0.30/0.70` true/effective weights. The same raw signal is also retained in legacy diagnostic fields such as `citation_context_quality_score`, but those diagnostic fields do not directly change `final_impact_score`.
 
 ## Output Fields
 
@@ -188,9 +227,13 @@ This means:
 | --- | --- |
 | `effective_citation_score` | 0-100 dataset-local normalized effective citation score |
 | `effective_citation_raw` | raw weighted incoming effective citation score |
+| `effective_citation_context_role_raw` | raw context-role-only incoming effective citation score |
+| `effective_citation_impact_selected_raw` | raw constrained local-model selected-reference score before per-edge max fusion |
 | `effective_citation_edge_count` | number of incoming internal citation edges |
 | `effective_citation_context_count` | number of citation contexts attached to incoming edges |
 | `effective_citation_count` | count of incoming edges with strong effective roles |
+| `effective_citation_impact_selected_count` | incoming internal edges selected by constrained local-model key-reference evidence |
+| `effective_citation_impact_selected_top5_count` | selected incoming edges whose model rank is in the strict top 5 |
 | `effective_citation_guideline_count` | context observations classified as guideline |
 | `effective_citation_clinical_count` | context observations classified as clinical |
 | `effective_citation_method_count` | context observations classified as method |

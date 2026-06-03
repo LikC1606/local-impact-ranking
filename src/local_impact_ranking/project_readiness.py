@@ -25,6 +25,8 @@ EVIDENCE_FILES = {
     "citation_cutoff_audit": "reports/citation_cutoff_audit.json",
     "external_evidence_readiness": "reports/external_evidence_readiness.json",
     "external_evidence_paper_coverage": "reports/external_evidence_paper_coverage.csv",
+    "citation_completeness_audit": "reports/citation_completeness_audit.json",
+    "citation_completeness_papers": "reports/citation_completeness_papers.csv",
     "anomaly_report": "reports/anomaly_report.json",
     "stability_report": "reports/stability_report.json",
     "paper_score_uncertainty": "reports/paper_score_uncertainty_report.json",
@@ -52,6 +54,9 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
     impact_validity = _read_json(root / "reports" / "impact_validity_evaluation.json")
     citation_cutoff_audit = _read_json(root / "reports" / "citation_cutoff_audit.json")
     external_evidence = _read_json(root / "reports" / "external_evidence_readiness.json")
+    citation_completeness = _read_json(
+        root / "reports" / "citation_completeness_audit.json"
+    )
     manifest = _read_json(root / "run_manifest.json")
 
     checks = _evaluate_checks(
@@ -94,6 +99,9 @@ def project_readiness_report(run_dir: str | Path) -> dict[str, Any]:
             "impact_validity": impact_validity_quality,
             "citation_cutoff_audit": citation_cutoff_audit_quality,
             "external_evidence": _external_evidence_quality(external_evidence),
+            "citation_completeness": _citation_completeness_quality(
+                citation_completeness
+            ),
             "stability": _stability_quality(stability),
             "anomaly": _anomaly_quality(anomaly),
             "scoring": {
@@ -162,6 +170,7 @@ def render_project_readiness_markdown(report: dict[str, Any]) -> str:
     gold_position = quality.get("gold_candidate_position", {})
     gold_baseline = quality.get("gold_baseline_comparison", {})
     external_evidence = quality.get("external_evidence", {})
+    citation_completeness = quality.get("citation_completeness", {})
     stability = quality.get("stability", {})
     anomaly = quality.get("anomaly", {})
     scoring = quality.get("scoring", {})
@@ -221,6 +230,11 @@ def render_project_readiness_markdown(report: dict[str, Any]) -> str:
         f"| opencitations_enriched_coverage | {_number(external_evidence.get('opencitations_enriched_coverage'))} |",
         f"| field_year_percentile_coverage | {_number(external_evidence.get('field_year_percentile_coverage'))} |",
         f"| materialized_internal_edge_count | {external_evidence.get('materialized_internal_edge_count', 0)} |",
+        f"| citation_evidence_coverage | {_number(citation_completeness.get('citation_evidence_coverage'))} |",
+        f"| citation_multi_source_coverage | {_number(citation_completeness.get('multi_source_coverage'))} |",
+        f"| citation_mean_completeness_score | {_number(citation_completeness.get('mean_completeness_score'))} |",
+        f"| citation_source_conflict_count | {citation_completeness.get('papers_with_source_conflict', 0)} |",
+        f"| citation_papers_without_query_ids | {citation_completeness.get('papers_without_query_ids', 0)} |",
         f"| unsupported_selection_rate | {_number(proxy.get('unsupported_selection_rate'))} |",
         f"| leave_one_target_out_average_retention_rate | {_number(stability.get('leave_one_target_out_average_retention_rate'))} |",
         f"| highest_paper_single_edge_dominance_share | {_number(anomaly.get('highest_paper_single_edge_dominance_share'))} |",
@@ -749,6 +763,33 @@ def _external_evidence_quality(external_evidence: dict[str, Any]) -> dict[str, A
         "internal_reference_edge_count": graph.get("internal_reference_edge_count", 0),
         "materialized_internal_edge_count": graph.get(
             "materialized_internal_edge_count",
+            0,
+        ),
+    }
+
+
+def _citation_completeness_quality(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    return {
+        "citation_evidence_coverage": summary.get("citation_evidence_coverage", 0.0),
+        "multi_source_coverage": summary.get("multi_source_coverage", 0.0),
+        "mean_completeness_score": summary.get("mean_completeness_score", 0.0),
+        "positive_citation_evidence_coverage": summary.get(
+            "positive_citation_evidence_coverage",
+            0.0,
+        ),
+        "papers_without_query_ids": summary.get("papers_without_query_ids", 0),
+        "papers_without_numeric_citation_evidence": summary.get(
+            "papers_without_numeric_citation_evidence",
+            0,
+        ),
+        "papers_with_single_source_only": summary.get(
+            "papers_with_single_source_only",
+            0,
+        ),
+        "papers_with_source_conflict": summary.get("papers_with_source_conflict", 0),
+        "papers_with_confirmed_multi_source_zero": summary.get(
+            "papers_with_confirmed_multi_source_zero",
             0,
         ),
     }

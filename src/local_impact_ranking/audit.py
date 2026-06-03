@@ -4,6 +4,8 @@ import json
 import hashlib
 from pathlib import Path
 
+from local_impact_ranking.enrichment_resume import write_jsonl_atomic
+from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.judge import JudgeResult, SelectedReference, build_judge_prompt
 from local_impact_ranking.models import Paper
 
@@ -93,3 +95,79 @@ def load_judge_results(path: str | Path) -> list[JudgeResult]:
 
 def completed_paper_ids(path: str | Path) -> set[str]:
     return {result.target_paper_id for result in load_judge_results(path)}
+
+
+def attach_judge_selections_to_papers(
+    input_path: str | Path,
+    judge_audit_path: str | Path,
+    output_path: str | Path,
+    *,
+    metadata_key: str = "impact_selected_references",
+) -> dict:
+    papers = load_papers_jsonl(input_path)
+    results_by_id = {
+        result.target_paper_id: result
+        for result in load_judge_results(judge_audit_path)
+    }
+    rows: list[dict] = []
+    matched_papers = 0
+    selected_count = 0
+    valid_selected_count = 0
+
+    for paper in papers:
+        record = paper.model_dump(mode="json", exclude_none=True)
+        result = results_by_id.get(paper.paper_id)
+        if result is None:
+            rows.append(record)
+            continue
+
+        valid_reference_ids = {
+            reference.reference_id
+            for reference in paper.references
+            if reference.reference_id
+        }
+        selections = [
+            _selection_metadata_record(selection, valid_reference_ids)
+            for selection in result.selected_references
+        ]
+        if selections:
+            matched_papers += 1
+            selected_count += len(selections)
+            valid_selected_count += sum(
+                1 for selection in selections if selection["valid"]
+            )
+            metadata = dict(record.get("metadata") or {})
+            metadata[metadata_key] = selections
+            metadata[f"{metadata_key}_source"] = {
+                "type": "judge_audit",
+                "path": str(judge_audit_path),
+                "prompt_sha256": result.prompt_sha256,
+                "candidate_reference_ids": list(result.candidate_reference_ids),
+            }
+            record["metadata"] = metadata
+        rows.append(record)
+
+    write_jsonl_atomic(output_path, rows)
+    return {
+        "paper_count": len(papers),
+        "judge_record_count": len(results_by_id),
+        "matched_paper_count": matched_papers,
+        "selected_reference_count": selected_count,
+        "valid_selected_reference_count": valid_selected_count,
+        "metadata_key": metadata_key,
+        "output": str(output_path),
+    }
+
+
+def _selection_metadata_record(
+    selection: SelectedReference,
+    valid_reference_ids: set[str | None],
+) -> dict:
+    valid = selection.valid and selection.reference_id in valid_reference_ids
+    return {
+        "reference_id": selection.reference_id,
+        "rank": selection.rank,
+        "confidence": selection.confidence,
+        "rationale": selection.rationale,
+        "valid": valid,
+    }

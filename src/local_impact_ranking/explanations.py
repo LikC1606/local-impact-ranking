@@ -5,8 +5,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from local_impact_ranking.models import Paper
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.judge import JudgeResult
+from local_impact_ranking.models import Paper
 from local_impact_ranking.scoring import scoring_edges
 
 
@@ -163,10 +164,10 @@ def export_paper_evidence_csv(report: dict[str, Any], path: str | Path) -> None:
         for paper in report.get("papers", []):
             top_edges = paper.get("top_source_edges", [])
             if not top_edges:
-                writer.writerow(_paper_evidence_csv_row(paper, {}))
+                writer.writerow(sanitize_csv_row(_paper_evidence_csv_row(paper, {})))
                 continue
             for edge in top_edges:
-                writer.writerow(_paper_evidence_csv_row(paper, edge))
+                writer.writerow(sanitize_csv_row(_paper_evidence_csv_row(paper, edge)))
 
 
 def entity_influence_explanations(

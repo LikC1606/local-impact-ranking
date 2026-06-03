@@ -248,6 +248,7 @@ def test_cli_enrich_opencitations_writes_enriched_jsonl(monkeypatch, tmp_path):
         assert kwargs["timeout"] == 12.0
         assert kwargs["include_edges"] is False
         assert kwargs["materialize_internal_edges"] is True
+        assert kwargs["resume"] is True
         output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
         return {
             "matched_count": 1,
@@ -276,6 +277,7 @@ def test_cli_enrich_opencitations_writes_enriched_jsonl(monkeypatch, tmp_path):
             "12",
             "--no-include-edges",
             "--materialize-internal-edges",
+            "--resume",
         ],
     )
 
@@ -417,6 +419,47 @@ def test_cli_external_evidence_readiness_writes_json_and_markdown(tmp_path):
     assert (output_dir / "external_evidence_readiness.json").exists()
     assert (output_dir / "external_evidence_readiness.md").exists()
     assert (output_dir / "external_evidence_paper_coverage.csv").exists()
+
+
+def test_cli_citation_completeness_audit_writes_json_markdown_and_csv(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_dir = tmp_path / "citation-completeness"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Paper",
+                "doi": "10.1000/a",
+                "references": [],
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 7,
+                        "semantic_scholar_citation_count": 8,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "citation-completeness-audit",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_dir),
+            "--markdown",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "# Citation Completeness Audit" in result.stdout
+    assert (output_dir / "citation_completeness_audit.json").exists()
+    assert (output_dir / "citation_completeness_audit.md").exists()
+    assert (output_dir / "citation_completeness_papers.csv").exists()
 
 
 def test_cli_score_card_writes_reportable_cards(tmp_path):
@@ -1097,6 +1140,9 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert (output_dir / "reports" / "external_evidence_readiness.json").exists()
     assert (output_dir / "reports" / "external_evidence_readiness.md").exists()
     assert (output_dir / "reports" / "external_evidence_paper_coverage.csv").exists()
+    assert (output_dir / "reports" / "citation_completeness_audit.json").exists()
+    assert (output_dir / "reports" / "citation_completeness_audit.md").exists()
+    assert (output_dir / "reports" / "citation_completeness_papers.csv").exists()
     assert (output_dir / "reports" / "anomaly_report.json").exists()
     assert (output_dir / "reports" / "scoring_config.json").exists()
     assert (output_dir / "reports" / "stability_report.json").exists()
@@ -1145,6 +1191,9 @@ def test_cli_run_writes_rankings_and_audit_outputs(tmp_path):
     assert "reports/external_evidence_readiness.json" in artifact_paths
     assert "reports/external_evidence_readiness.md" in artifact_paths
     assert "reports/external_evidence_paper_coverage.csv" in artifact_paths
+    assert "reports/citation_completeness_audit.json" in artifact_paths
+    assert "reports/citation_completeness_audit.md" in artifact_paths
+    assert "reports/citation_completeness_papers.csv" in artifact_paths
     assert "reports/gold_evaluation.json" in artifact_paths
     assert "reports/gold_candidate_position.json" in artifact_paths
     assert "reports/gold_candidate_position.md" in artifact_paths
@@ -1788,6 +1837,91 @@ def test_cli_judge_can_disable_progress_output(tmp_path):
     assert "Judge progress" not in result.output
     assert "Judged 1/1" not in result.output
     assert "Wrote 1 judge records" in result.output
+
+
+def test_cli_attach_judge_selections_writes_effective_citation_metadata(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    audit_path = tmp_path / "judge_outputs.jsonl"
+    output_path = tmp_path / "papers.with-selections.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "paper_id": "target",
+                        "title": "Target paper",
+                        "references": [
+                            {"reference_id": "cited", "title": "Cited paper"}
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "paper_id": "cited",
+                        "title": "Cited paper",
+                        "references": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    audit_path.write_text(
+        json.dumps(
+            {
+                "target_paper_id": "target",
+                "prompt_sha256": "abc123",
+                "candidate_reference_ids": ["cited"],
+                "selected_references": [
+                    {
+                        "reference_id": "cited",
+                        "rank": 1,
+                        "confidence": 0.82,
+                        "rationale": "Used as the core method.",
+                        "valid": True,
+                    },
+                    {
+                        "reference_id": "hallucinated",
+                        "rank": 2,
+                        "confidence": 0.50,
+                        "rationale": "Invalid selection.",
+                        "valid": True,
+                    },
+                ],
+                "raw_output": "{}",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "attach-judge-selections",
+            "--input",
+            str(input_path),
+            "--judge-audit",
+            str(audit_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    rows = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    target = rows[0]
+    selections = target["metadata"]["impact_selected_references"]
+    assert selections[0]["reference_id"] == "cited"
+    assert selections[0]["valid"] is True
+    assert selections[1]["reference_id"] == "hallucinated"
+    assert selections[1]["valid"] is False
+    assert target["metadata"]["impact_selected_references_source"]["type"] == "judge_audit"
 
 
 def test_cli_judge_limit_applies_before_resume_skip(tmp_path):

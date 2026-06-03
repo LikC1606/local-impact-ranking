@@ -8,8 +8,13 @@ from urllib.parse import quote
 
 import httpx
 
+from local_impact_ranking.enrichment_resume import (
+    resume_rows_by_paper_id,
+    write_jsonl_atomic,
+)
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import Paper
+from local_impact_ranking.normalize import normalize_doi
 from local_impact_ranking.openalex_enrichment import paper_doi
 
 
@@ -18,6 +23,7 @@ S2_FIELDS = (
     "paperId,corpusId,externalIds,title,year,citationCount,"
     "influentialCitationCount,fieldsOfStudy"
 )
+DEFAULT_SEMANTIC_SCHOLAR_BATCH_SIZE = 100
 RATE_LIMITED = object()
 
 
@@ -27,9 +33,15 @@ def enrich_papers_with_semantic_scholar(
     *,
     api_key: str | None = None,
     timeout: float = 30.0,
+    batch_size: int = DEFAULT_SEMANTIC_SCHOLAR_BATCH_SIZE,
+    resume: bool = False,
     client: Any | None = None,
 ) -> dict[str, Any]:
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
     papers = load_papers_jsonl(input_path)
+    destination = Path(output_path)
+    resumed_rows = resume_rows_by_paper_id(destination) if resume else {}
     owns_client = client is None
     http_client = client or httpx.Client(timeout=timeout)
     rows = []
@@ -47,37 +59,52 @@ def enrich_papers_with_semantic_scholar(
         "batch_size": 0,
         "rate_limited_count": 0,
         "rate_limit_stopped_count": 0,
+        "resume": resume,
+        "resumed_count": 0,
         "source": "semantic_scholar",
     }
     prepared = [
-        (paper, paper.model_dump(mode="json", exclude_none=True), _semantic_scholar_query_for_paper(paper))
+        (
+            paper,
+            paper.model_dump(mode="json", exclude_none=True),
+            _semantic_scholar_query_for_paper(paper),
+        )
         for paper in papers
     ]
     batch_indices = [
         index
         for index, (_, _, query) in enumerate(prepared)
         if query is not None and query["kind"] in {"doi", "semantic_scholar"}
+        and prepared[index][0].paper_id not in resumed_rows
     ]
     batch_results: dict[int, dict[str, Any] | None] = {}
-    batch_rate_limited = False
+    batch_rate_limited_indices: set[int] = set()
     if len(batch_indices) > 1 and hasattr(http_client, "post"):
-        batch_queries = [prepared[index][2] for index in batch_indices]
-        batch_payload = _fetch_semantic_scholar_batch(
-            http_client,
-            [query for query in batch_queries if query is not None],
-            api_key=api_key,
-        )
-        summary["batch_query_count"] = 1
         summary["batch_size"] = len(batch_indices)
-        if batch_payload is RATE_LIMITED:
-            batch_rate_limited = True
-        else:
-            for index, payload in zip(batch_indices, batch_payload):
+        for chunk_start in range(0, len(batch_indices), batch_size):
+            chunk_indices = batch_indices[chunk_start : chunk_start + batch_size]
+            batch_queries = [prepared[index][2] for index in chunk_indices]
+            batch_payload = _fetch_semantic_scholar_batch(
+                http_client,
+                [query for query in batch_queries if query is not None],
+                api_key=api_key,
+            )
+            summary["batch_query_count"] += 1
+            if batch_payload is RATE_LIMITED:
+                batch_rate_limited_indices.update(batch_indices[chunk_start:])
+                break
+            for offset, index in enumerate(chunk_indices):
+                payload = batch_payload[offset] if offset < len(batch_payload) else None
                 batch_results[index] = payload if isinstance(payload, dict) else None
 
     rate_limit_reached = False
     try:
         for index, (paper, record, query) in enumerate(prepared):
+            resumed_row = resumed_rows.get(paper.paper_id)
+            if resumed_row is not None:
+                rows.append(resumed_row)
+                summary["resumed_count"] += 1
+                continue
             if rate_limit_reached:
                 rows.append(record)
                 summary["unmatched_count"] += 1
@@ -94,7 +121,7 @@ def enrich_papers_with_semantic_scholar(
                 summary["semantic_scholar_id_query_count"] += 1
             elif query["kind"] == "title":
                 summary["title_query_count"] += 1
-            if batch_rate_limited and index in batch_indices:
+            if index in batch_rate_limited_indices:
                 paper_payload = RATE_LIMITED
             elif index in batch_results:
                 paper_payload = batch_results[index]
@@ -124,11 +151,7 @@ def enrich_papers_with_semantic_scholar(
         if owns_client and hasattr(http_client, "close"):
             http_client.close()
 
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl_atomic(destination, rows)
     summary["output_path"] = str(destination)
     return summary
 
@@ -274,11 +297,7 @@ def _paper_identifier(paper: Paper, key: str) -> str | None:
 
 
 def _normalize_doi(value: str) -> str:
-    normalized = value.strip()
-    normalized = normalized.removeprefix("https://doi.org/")
-    normalized = normalized.removeprefix("http://doi.org/")
-    normalized = normalized.removeprefix("doi:")
-    return normalized
+    return normalize_doi(value)
 
 
 def _external_doi(value: Any) -> str | None:

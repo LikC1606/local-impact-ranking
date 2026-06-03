@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from local_impact_ranking.audit import load_judge_results
+from local_impact_ranking.csv_safety import sanitize_csv_row
 
 
 FIELDNAMES = [
@@ -40,7 +41,7 @@ def write_benchmark_comparison(run_dirs: list[str | Path], output_dir: str | Pat
     with (destination / "benchmark_comparison.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(sanitize_csv_row(row) for row in rows)
     (destination / "benchmark_comparison.md").write_text(
         render_benchmark_comparison_markdown(rows),
         encoding="utf-8",
@@ -635,10 +636,9 @@ def _write_target_change_csv(report: dict[str, Any], path: Path) -> None:
         writer.writeheader()
         for row in report.get("all_changes", []):
             writer.writerow(
-                {
-                    key: _csv_value(row.get(key))
-                    for key in fieldnames
-                }
+                sanitize_csv_row(
+                    {key: _csv_value(row.get(key)) for key in fieldnames}
+                )
             )
 
 

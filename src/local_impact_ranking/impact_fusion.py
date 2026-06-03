@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from difflib import SequenceMatcher
+import html
 import math
+import re
 from typing import Any
 
 from local_impact_ranking.baselines import compute_bibliometric_baselines
@@ -38,6 +41,7 @@ IMPACT_INDEX_V3_WEIGHTS = {
 
 COMPONENT_SCORE_FIELDS = {
     "model_pairwise": "model_pairwise_score",
+    "true_citation": "true_citation_score",
     "field_year_normalized_citation": "field_year_normalized_citation_score",
     "relative_citation_ratio": "relative_citation_ratio_score",
     "citation_graph": "citation_graph_score",
@@ -46,6 +50,256 @@ COMPONENT_SCORE_FIELDS = {
     "temporal_momentum": "temporal_momentum_score",
     "external_adoption": "external_adoption_score",
 }
+
+
+FINAL_IMPACT_SCORE_WEIGHTS = {
+    "true_citation_score": 0.95,
+    "effective_citation_score": 0.05,
+}
+
+
+FINAL_IMPACT_SCORE_SENSITIVITY_WEIGHTS = {
+    "score_100_true_00_effective": {
+        "true_citation_score": 1.00,
+        "effective_citation_score": 0.00,
+    },
+    "score_95_true_05_effective": {
+        "true_citation_score": 0.95,
+        "effective_citation_score": 0.05,
+    },
+    "score_90_true_10_effective": {
+        "true_citation_score": 0.90,
+        "effective_citation_score": 0.10,
+    },
+    "score_50_true_50_effective": {
+        "true_citation_score": 0.50,
+        "effective_citation_score": 0.50,
+    },
+    "score_70_true_30_effective": {
+        "true_citation_score": 0.70,
+        "effective_citation_score": 0.30,
+    },
+    "score_80_true_20_effective": {
+        "true_citation_score": 0.80,
+        "effective_citation_score": 0.20,
+    },
+    "score_30_true_70_effective": {
+        "true_citation_score": 0.30,
+        "effective_citation_score": 0.70,
+    },
+}
+
+
+TRUE_CITATION_SOURCE_KEYS = (
+    (
+        "openalex",
+        (
+            "openalex_cited_by_count",
+            "openalex_citation_count",
+            "openalex_citations",
+        ),
+    ),
+    (
+        "semantic_scholar",
+        (
+            "semantic_scholar_citation_count",
+            "s2_citation_count",
+            "semantic_scholar_citations",
+        ),
+    ),
+    (
+        "pubmed_icite",
+        (
+            "pubmed_citation_count",
+            "pmid_citation_count",
+            "pmc_citation_count",
+            "icite_citation_count",
+            "nih_icite_citation_count",
+            "icite_total_citations",
+            "nih_icite_citations",
+        ),
+    ),
+    (
+        "ucite",
+        (
+            "ucite_citation_count",
+            "ucite_cited_by_count",
+            "ucite_citations",
+            "ucite_total_citations",
+        ),
+    ),
+    (
+        "nih_occ",
+        (
+            "nih_occ_citation_count",
+            "nih_occ_cited_by_count",
+            "nih_occ_citations",
+            "nih_open_citation_collection_citation_count",
+            "open_citation_collection_citation_count",
+            "occ_citation_count",
+        ),
+    ),
+    (
+        "dimensions",
+        (
+            "dimensions_citation_count",
+            "dimensions_cited_by_count",
+            "dimensions_citations",
+            "dimensions_times_cited",
+        ),
+    ),
+    (
+        "scopus",
+        (
+            "scopus_citation_count",
+            "scopus_cited_by_count",
+            "scopus_citations",
+            "scopus_times_cited",
+        ),
+    ),
+    (
+        "web_of_science",
+        (
+            "web_of_science_citation_count",
+            "web_of_science_cited_by_count",
+            "web_of_science_citations",
+            "webofscience_citation_count",
+            "wos_citation_count",
+            "wos_times_cited",
+            "times_cited",
+        ),
+    ),
+    (
+        "lens",
+        (
+            "lens_citation_count",
+            "lens_cited_by_count",
+            "lens_citations",
+        ),
+    ),
+    (
+        "google_scholar",
+        (
+            "google_scholar_citation_count",
+            "google_scholar_cited_by_count",
+            "google_scholar_citations",
+            "scholar_citation_count",
+            "gs_citation_count",
+        ),
+    ),
+    (
+        "opencitations",
+        (
+            "opencitations_cited_by_count",
+            "opencitations_citation_count",
+            "opencitations_citations",
+        ),
+    ),
+    (
+        "crossref",
+        (
+            "crossref_cited_by_count",
+            "crossref_is_referenced_by_count",
+            "is_referenced_by_count",
+            "is-referenced-by-count",
+        ),
+    ),
+    (
+        "crossref_data_citations",
+        (
+            "crossref_data_citation_count",
+            "crossref_data_citations_total_results",
+        ),
+    ),
+    (
+        "datacite",
+        (
+            "datacite_citation_count",
+            "datacite_cited_by_count",
+        ),
+    ),
+    (
+        "datacite_events",
+        (
+            "datacite_events_cited_by_count",
+            "datacite_events_citation_count",
+        ),
+    ),
+    (
+        "openaire",
+        (
+            "openaire_citation_count",
+            "openaire_cited_by_count",
+        ),
+    ),
+    (
+        "wikidata",
+        (
+            "wikidata_cited_by_count",
+            "wikidata_citation_count",
+        ),
+    ),
+    (
+        "europepmc",
+        (
+            "europepmc_cited_by_count",
+            "europepmc_citation_count",
+        ),
+    ),
+    (
+        "ncbi_pubmed",
+        (
+            "ncbi_pubmed_citedin_count",
+            "ncbi_pubmed_cited_by_count",
+        ),
+    ),
+)
+
+
+TRUE_CITATION_RAW_FIELD_BY_SOURCE = {
+    "openalex": "true_citation_openalex_raw",
+    "semantic_scholar": "true_citation_semantic_scholar_raw",
+    "pubmed_icite": "true_citation_pubmed_icite_raw",
+    "ucite": "true_citation_ucite_raw",
+    "nih_occ": "true_citation_nih_occ_raw",
+    "dimensions": "true_citation_dimensions_raw",
+    "scopus": "true_citation_scopus_raw",
+    "web_of_science": "true_citation_web_of_science_raw",
+    "lens": "true_citation_lens_raw",
+    "google_scholar": "true_citation_google_scholar_raw",
+    "opencitations": "true_citation_opencitations_raw",
+    "crossref": "true_citation_crossref_raw",
+    "crossref_data_citations": "true_citation_crossref_data_citations_raw",
+    "datacite": "true_citation_datacite_raw",
+    "datacite_events": "true_citation_datacite_events_raw",
+    "openaire": "true_citation_openaire_raw",
+    "wikidata": "true_citation_wikidata_raw",
+    "europepmc": "true_citation_europepmc_raw",
+    "ncbi_pubmed": "true_citation_ncbi_pubmed_raw",
+    "supplied": "true_citation_supplied_raw",
+}
+
+
+EXTERNAL_IDENTITY_TITLE_KEYS = (
+    "europepmc_title",
+    "crossref_title",
+    "datacite_title",
+    "openaire_title",
+    "wikidata_title",
+    "plos_title",
+    "openalex_display_name",
+    "openalex_title",
+    "semantic_scholar_title",
+    "scopus_title",
+    "web_of_science_title",
+    "dimensions_title",
+    "lens_title",
+    "google_scholar_title",
+    "ucite_title",
+    "nih_occ_title",
+)
+
+EXTERNAL_IDENTITY_TITLE_MATCH_THRESHOLD = 0.70
 
 
 EFFECTIVE_CITATION_ROLE_WEIGHTS = {
@@ -58,6 +312,25 @@ EFFECTIVE_CITATION_ROLE_WEIGHTS = {
     "background": 0.35,
     "unknown": 0.1,
 }
+
+IMPACT_SELECTED_REFERENCE_METADATA_KEYS = (
+    "impact_selected_references",
+    "impactrankings_selected_references",
+    "llm_selected_references",
+    "model_selected_references",
+    "judge_selected_references",
+    "selected_references",
+)
+
+IMPACT_SELECTED_REFERENCE_TOP5_WEIGHTS = {
+    1: 1.0,
+    2: 0.8,
+    3: 0.6,
+    4: 0.4,
+    5: 0.2,
+}
+IMPACT_SELECTED_REFERENCE_MAX_RANK = 20
+IMPACT_SELECTED_REFERENCE_EXPANDED_SCALE = 0.5
 
 STRONG_EFFECTIVE_CITATION_ROLES = {
     "guideline",
@@ -201,6 +474,7 @@ def compute_impact_index_v2(
         )
         row["reportability_basis"] = "impact_index_v3_evidence_first"
         _attach_credibility_adjusted_score(row)
+        _attach_true_effective_final_score(row)
         _attach_source_quality_gate(row, paper)
         _attach_reportability_gaps(row)
         rows.append(row)
@@ -218,6 +492,7 @@ def compute_impact_index_v2(
     )
     summary["reportability"] = _reportability_summary(rows)
     summary["evidence_first"] = _evidence_first_summary(rows)
+    summary["true_effective_citation"] = _true_effective_citation_summary(rows)
     return {
         "summary": summary,
         "rankings": rows,
@@ -230,6 +505,7 @@ def _impact_components(
 ) -> dict[str, dict[str, Any]]:
     baselines = compute_bibliometric_baselines(papers)
     internal_edge_count = _internal_reference_edge_count(papers)
+    true_citations = _true_citation_components(papers)
     raw_citation_counts = {
         paper.paper_id: count
         for paper in papers
@@ -293,6 +569,14 @@ def _impact_components(
             },
             "available_ids": pairwise_available_ids,
             "reason": "Pairwise local model score is available when the paper has at least one decisive comparison; model-score-dataset uses order-independent Rank Centrality by default and retains Elo as an audit field.",
+        },
+        "true_citation": {
+            "scores": true_citations["scores"],
+            "raw": true_citations["raw"],
+            "sources": true_citations["sources"],
+            "evidence": true_citations["evidence"],
+            "available_ids": true_citations["available_ids"],
+            "reason": "True citation count is resolved across OpenAlex, Semantic Scholar, PubMed/iCite, uCite, NIH-OCC, Dimensions, Scopus, Web of Science, Lens, Google Scholar, OpenCitations, Crossref, Europe PMC, NCBI ELink, and supplied counts. The scoring count uses the maximum available non-null source value, while all raw source values and source-conflict diagnostics are retained for audit.",
         },
         "field_year_normalized_citation": {
             "scores": _normalize_to_100(raw_field_year, papers),
@@ -388,6 +672,34 @@ def _attach_raw_component_values(
     components: dict[str, dict[str, Any]],
 ) -> None:
     row["model_pairwise_raw"] = components["model_pairwise"]["raw"].get(paper_id, 0.0)
+    true_citation = components["true_citation"]
+    row["true_citation_score"] = true_citation["scores"].get(paper_id, 0.0)
+    row["true_citation_raw"] = true_citation["raw"].get(paper_id)
+    row["true_citation_source"] = true_citation["sources"].get(paper_id, "missing")
+    evidence = true_citation.get("evidence", {}).get(paper_id, {})
+    per_source = evidence.get("per_source", {})
+    for source, field_name in TRUE_CITATION_RAW_FIELD_BY_SOURCE.items():
+        row[field_name] = per_source.get(source)
+    identity = evidence.get("identity", {})
+    row["true_citation_identity_status"] = identity.get("status", "unchecked")
+    row["true_citation_identity_similarity"] = identity.get("title_similarity")
+    row["true_citation_identity_external_title"] = identity.get("external_title")
+    row["true_citation_identity_reason"] = identity.get("reason")
+    row["true_citation_min_raw"] = evidence.get("min_count")
+    row["true_citation_max_raw"] = evidence.get("max_count")
+    row["true_citation_source_count"] = int(evidence.get("source_count") or 0)
+    row["true_citation_positive_source_count"] = int(
+        evidence.get("positive_source_count") or 0
+    )
+    row["true_citation_source_agreement"] = evidence.get(
+        "source_agreement",
+        "missing",
+    )
+    row["true_citation_source_conflict_flag"] = bool(
+        evidence.get("source_conflict_flag", False)
+    )
+    row["true_citation_source_spread"] = evidence.get("source_spread")
+    row["true_citation_source_spread_ratio"] = evidence.get("source_spread_ratio")
     row["field_year_normalized_citation_raw"] = components[
         "field_year_normalized_citation"
     ]["raw"].get(paper_id, 0.0)
@@ -407,9 +719,22 @@ def _attach_raw_component_values(
     effective = components["effective_citation"]
     row["effective_citation_score"] = effective["scores"].get(paper_id, 0.0)
     row["effective_citation_raw"] = effective["raw"].get(paper_id, 0.0)
+    row["effective_citation_context_role_raw"] = effective["context_role_raw"].get(
+        paper_id,
+        0.0,
+    )
+    row["effective_citation_impact_selected_raw"] = effective[
+        "impact_selected_raw"
+    ].get(paper_id, 0.0)
     row["effective_citation_edge_count"] = effective["edge_count"].get(paper_id, 0)
     row["effective_citation_context_count"] = effective["context_count"].get(paper_id, 0)
     row["effective_citation_count"] = effective["effective_count"].get(paper_id, 0)
+    row["effective_citation_impact_selected_count"] = effective[
+        "impact_selected_count"
+    ].get(paper_id, 0)
+    row["effective_citation_impact_selected_top5_count"] = effective[
+        "impact_selected_top5_count"
+    ].get(paper_id, 0)
     row["effective_citation_guideline_count"] = effective["guideline_count"].get(
         paper_id,
         0,
@@ -507,8 +832,15 @@ def _fusion_summary(
 ) -> dict[str, Any]:
     paper_count = len(papers)
     return {
-        "version": "impact_index_v3_evidence_first",
-        "score_range": "0-100 dataset-local fused impact score",
+        "version": "true_effective_citation_impact_v1",
+        "legacy_fusion_version": "impact_index_v3_evidence_first",
+        "score_range": "0-100 dataset-local two-category citation impact score",
+        "final_score_method": "true_effective_citation_impact_v1",
+        "final_score_formula": dict(FINAL_IMPACT_SCORE_WEIGHTS),
+        "final_score_sensitivity_weights": dict(
+            FINAL_IMPACT_SCORE_SENSITIVITY_WEIGHTS
+        ),
+        "final_score_policy": "Only true citation count and effective citation count are used for final_impact_score. Model, graph, field/year, momentum, and external-adoption fields are retained for audit and diagnostics only.",
         "base_weights": weights,
         "evidence_first_weights": evidence_weights,
         "impact_index_v3_weights": impact_index_v3_weights,
@@ -526,10 +858,45 @@ def _fusion_summary(
                 "reason": values["reason"],
             }
             for name, values in components.items()
-            if name in set(weights) | set(EVIDENCE_FIRST_WEIGHTS)
+            if name in {"true_citation"} | set(weights) | set(EVIDENCE_FIRST_WEIGHTS)
         },
         "missing_signal_policy": "Per paper, missing signal weights are redistributed across available signals instead of being treated as zero.",
         "claim_scope": "dataset-local influence inside the supplied corpus; not global scientific impact unless external graph calibration is supplied.",
+    }
+
+
+def _true_effective_citation_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    paper_count = len(rows)
+    true_count = sum(1 for row in rows if row.get("true_citation_raw") is not None)
+    effective_count = sum(
+        1 for row in rows if int(row.get("effective_citation_edge_count") or 0) > 0
+    )
+    both_count = sum(
+        1
+        for row in rows
+        if row.get("true_citation_raw") is not None
+        and int(row.get("effective_citation_edge_count") or 0) > 0
+    )
+    return {
+        "formula": dict(FINAL_IMPACT_SCORE_WEIGHTS),
+        "sensitivity_weights": dict(FINAL_IMPACT_SCORE_SENSITIVITY_WEIGHTS),
+        "true_citation_paper_count": true_count,
+        "effective_citation_paper_count": effective_count,
+        "both_signal_paper_count": both_count,
+        "paper_count": paper_count,
+        "true_citation_coverage_rate": round(
+            true_count / paper_count if paper_count else 0.0,
+            6,
+        ),
+        "effective_citation_coverage_rate": round(
+            effective_count / paper_count if paper_count else 0.0,
+            6,
+        ),
+        "both_signal_coverage_rate": round(
+            both_count / paper_count if paper_count else 0.0,
+            6,
+        ),
+        "interpretation": "final_impact_score is the benchmark-conservative weighted combination of true_citation_score and effective_citation_score; missing categories contribute 0 rather than being imputed.",
     }
 
 
@@ -748,6 +1115,41 @@ def _attach_credibility_adjusted_score(row: dict[str, Any]) -> None:
     row["final_impact_score"] = row["credibility_adjusted_impact_score"]
 
 
+def _attach_true_effective_final_score(row: dict[str, Any]) -> None:
+    true_score = float(row.get("true_citation_score") or 0.0)
+    effective_score = float(row.get("effective_citation_score") or 0.0)
+    for field_name, weights in FINAL_IMPACT_SCORE_SENSITIVITY_WEIGHTS.items():
+        row[field_name] = round(
+            weights["true_citation_score"] * true_score
+            + weights["effective_citation_score"] * effective_score,
+            6,
+        )
+    final_score = (
+        FINAL_IMPACT_SCORE_WEIGHTS["true_citation_score"] * true_score
+        + FINAL_IMPACT_SCORE_WEIGHTS["effective_citation_score"] * effective_score
+    )
+    available_signals = []
+    if row.get("true_citation_raw") is not None:
+        available_signals.append("true_citation")
+    if int(row.get("effective_citation_edge_count") or 0) > 0:
+        available_signals.append("effective_citation")
+
+    row["true_effective_citation_impact_score"] = round(final_score, 6)
+    row["final_impact_score"] = row["true_effective_citation_impact_score"]
+    row["final_score_method"] = "true_effective_citation_impact_v1"
+    row["final_score_formula"] = dict(FINAL_IMPACT_SCORE_WEIGHTS)
+    row["final_score_sensitivity_fields"] = list(
+        FINAL_IMPACT_SCORE_SENSITIVITY_WEIGHTS
+    )
+    row["final_score_signal_count"] = len(available_signals)
+    row["final_score_available_signals"] = available_signals
+    row["final_score_missing_signals"] = [
+        signal
+        for signal in ("true_citation", "effective_citation")
+        if signal not in available_signals
+    ]
+
+
 def _credibility_adjustment(row: dict[str, Any]) -> tuple[float, str]:
     status = str(row.get("reportability_status", "low_confidence"))
     tier = str(row.get("credible_evidence_tier", "model_only"))
@@ -845,6 +1247,271 @@ def _is_non_article_source(paper: Paper, source_kind: str) -> bool:
             "supplemental online content",
         )
     )
+
+
+def _true_citation_components(papers: list[Paper]) -> dict[str, Any]:
+    raw: dict[str, float] = {}
+    sources: dict[str, str] = {}
+    evidence_by_id: dict[str, dict[str, Any]] = {}
+    for paper in papers:
+        evidence = _true_citation_evidence(paper)
+        value = evidence["preferred_count"]
+        source = evidence["preferred_source"]
+        if value is None:
+            if source == "external_identity_mismatch":
+                sources[paper.paper_id] = source
+                evidence_by_id[paper.paper_id] = evidence
+            continue
+        raw[paper.paper_id] = value
+        sources[paper.paper_id] = source
+        evidence_by_id[paper.paper_id] = evidence
+    scores = _normalize_to_100(
+        {
+            paper_id: _robust_citation_value(value)
+            for paper_id, value in raw.items()
+        },
+        papers,
+    )
+    return {
+        "raw": raw,
+        "sources": sources,
+        "evidence": evidence_by_id,
+        "scores": scores,
+        "available_ids": set(raw),
+    }
+
+
+def _true_citation_count_with_source(paper: Paper) -> tuple[float | None, str]:
+    evidence = _true_citation_evidence(paper)
+    return evidence["preferred_count"], evidence["preferred_source"]
+
+
+def true_citation_evidence(paper: Paper) -> dict[str, Any]:
+    return _true_citation_evidence(paper)
+
+
+def _true_citation_evidence(paper: Paper) -> dict[str, Any]:
+    values: dict[str, float] = {}
+    identity = _external_identity_evidence(paper)
+    for source_name, keys in TRUE_CITATION_SOURCE_KEYS:
+        value = _number_from_metric_sources(paper, keys)
+        if value is not None:
+            values[source_name] = value
+
+    supplied_value = _supplied_citation_count(paper)
+    if supplied_value is not None and (
+        not values or supplied_value > max(values.values())
+    ):
+        values["supplied"] = supplied_value
+
+    if not values:
+        return {
+            "preferred_count": None,
+            "preferred_source": "missing",
+            "per_source": {},
+            "source_count": 0,
+            "positive_source_count": 0,
+            "min_count": None,
+            "max_count": None,
+            "source_agreement": "missing",
+            "source_conflict_flag": False,
+            "source_spread": None,
+            "source_spread_ratio": None,
+            "identity": identity,
+        }
+
+    min_count = min(values.values())
+    max_count = max(values.values())
+    source_count = len(values)
+    positive_source_count = sum(1 for value in values.values() if value > 0.0)
+    if identity["status"] == "mismatch":
+        return {
+            "preferred_count": None,
+            "preferred_source": "external_identity_mismatch",
+            "per_source": values,
+            "source_count": source_count,
+            "positive_source_count": positive_source_count,
+            "min_count": min_count,
+            "max_count": max_count,
+            "source_agreement": "identity_mismatch",
+            "source_conflict_flag": True,
+            "source_spread": round(max_count - min_count, 6),
+            "source_spread_ratio": (
+                round(max_count / min_count, 6) if min_count > 0.0 else None
+            ),
+            "identity": identity,
+        }
+
+    selected_source = _true_citation_max_source(values, max_count)
+    conflict_flag = _true_citation_source_conflict_flag(values)
+    source_agreement = _true_citation_source_agreement(
+        values,
+        conflict_flag=conflict_flag,
+    )
+    if max_count == 0.0:
+        preferred_source = "multi_source_zero"
+    elif selected_source == "supplied":
+        preferred_source = "supplied_citation_count"
+    else:
+        preferred_source = selected_source
+
+    source_spread_ratio = None
+    if min_count > 0.0:
+        source_spread_ratio = round(max_count / min_count, 6)
+
+    return {
+        "preferred_count": max_count,
+        "preferred_source": preferred_source,
+        "per_source": values,
+        "source_count": source_count,
+        "positive_source_count": positive_source_count,
+        "min_count": min_count,
+        "max_count": max_count,
+        "source_agreement": source_agreement,
+        "source_conflict_flag": conflict_flag,
+        "source_spread": round(max_count - min_count, 6),
+        "source_spread_ratio": source_spread_ratio,
+        "identity": identity,
+    }
+
+
+def _external_identity_evidence(paper: Paper) -> dict[str, Any]:
+    metadata = paper.metadata if isinstance(paper.metadata, dict) else {}
+    forced_status = metadata.get("external_identity_status")
+    if forced_status == "verified":
+        return {
+            "status": "verified",
+            "title_similarity": None,
+            "external_title": None,
+            "reason": "External identity was marked verified in metadata.",
+        }
+    external_title = _external_identity_title(metadata)
+    if not external_title:
+        return {
+            "status": "unchecked",
+            "title_similarity": None,
+            "external_title": None,
+            "reason": "No external title was available for identity verification.",
+        }
+    similarity = _title_similarity_for_identity(paper.title, external_title)
+    if similarity < EXTERNAL_IDENTITY_TITLE_MATCH_THRESHOLD:
+        return {
+            "status": "mismatch",
+            "title_similarity": round(similarity, 6),
+            "external_title": external_title,
+            "reason": (
+                "External title is below the title-match threshold; citation counts "
+                "are retained for audit but excluded from true-citation scoring."
+            ),
+        }
+    return {
+        "status": "matched",
+        "title_similarity": round(similarity, 6),
+        "external_title": external_title,
+        "reason": "External title is compatible with the local paper title.",
+    }
+
+
+def _external_identity_title(metadata: dict[str, Any]) -> str | None:
+    for key in EXTERNAL_IDENTITY_TITLE_KEYS:
+        value = metadata.get(key)
+        if value:
+            return _clean_external_title(str(value))
+    return None
+
+
+def _clean_external_title(value: str) -> str:
+    text = html.unescape(value)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_similarity_for_identity(left: str, right: str) -> float:
+    normalized_left = _normalize_title_for_identity(left)
+    normalized_right = _normalize_title_for_identity(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if normalized_left == normalized_right:
+        return 1.0
+    shorter, longer = sorted((normalized_left, normalized_right), key=len)
+    if len(shorter) >= 30 and shorter in longer:
+        return 0.96
+    return SequenceMatcher(None, normalized_left, normalized_right).ratio()
+
+
+def _normalize_title_for_identity(title: str) -> str:
+    text = html.unescape(title).lower()
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _supplied_citation_count(paper: Paper) -> float | None:
+    value = _paper_extra(paper, "citation_count")
+    if (number := _numeric_or_none(value)) is not None:
+        return number
+    for key in ("citation_count", "cited_by_count", "citations"):
+        value = _number_from_metric_sources(paper, (key,))
+        if value is not None:
+            return value
+    return None
+
+
+def _true_citation_max_source(values: dict[str, float], max_count: float) -> str:
+    for source_name, _keys in TRUE_CITATION_SOURCE_KEYS:
+        if values.get(source_name) == max_count:
+            return source_name
+    if values.get("supplied") == max_count:
+        return "supplied"
+    return max(values, key=lambda source: values[source])
+
+
+def _true_citation_source_conflict_flag(values: dict[str, float]) -> bool:
+    if len(values) < 2:
+        return False
+    min_count = min(values.values())
+    max_count = max(values.values())
+    if max_count <= 0.0:
+        return False
+    if min_count == 0.0:
+        return True
+    return (max_count / min_count) >= 2.0
+
+
+def _true_citation_source_agreement(
+    values: dict[str, float],
+    *,
+    conflict_flag: bool,
+) -> str:
+    if not values:
+        return "missing"
+    min_count = min(values.values())
+    max_count = max(values.values())
+    if max_count == 0.0:
+        return "all_zero"
+    if math.isclose(min_count, max_count):
+        return "exact"
+    if conflict_flag:
+        return "conflict"
+    return "compatible"
+
+
+def _number_from_metric_sources(paper: Paper, keys: tuple[str, ...]) -> float | None:
+    sources = [
+        paper.metadata.get("external_impact"),
+        paper.metadata.get("impact"),
+        paper.metadata.get("metrics"),
+        paper.metadata,
+        getattr(paper, "__pydantic_extra__", None) or {},
+    ]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = _numeric_or_none(source.get(key))
+            if value is not None:
+                return value
+    return None
 
 
 def _field_year_normalized_citations(papers: list[Paper]) -> dict[str, float]:
@@ -1244,6 +1911,9 @@ def _artifact_adoption_count(paper: Paper) -> float | None:
         "model_downloads",
         "dataset_downloads",
         "huggingface_downloads",
+        "article_usage_count",
+        "plos_usage_count",
+        "plos_counter_total_all",
         "protocol_reuses",
         "protocol_citations",
         "assay_reuses",
@@ -1341,9 +2011,13 @@ def _robust_citation_value(count: float) -> float:
 def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, Any]]:
     paper_ids = {paper.paper_id for paper in papers}
     raw: defaultdict[str, float] = defaultdict(float)
+    context_role_raw: defaultdict[str, float] = defaultdict(float)
+    impact_selected_raw: defaultdict[str, float] = defaultdict(float)
     edge_count: defaultdict[str, int] = defaultdict(int)
     context_count: defaultdict[str, int] = defaultdict(int)
     effective_count: defaultdict[str, int] = defaultdict(int)
+    impact_selected_count: defaultdict[str, int] = defaultdict(int)
+    impact_selected_top5_count: defaultdict[str, int] = defaultdict(int)
     role_counts = {
         role: defaultdict(int)
         for role in EFFECTIVE_CITATION_ROLE_WEIGHTS
@@ -1351,6 +2025,16 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
 
     for citing_paper in papers:
         contexts_by_reference = citation_contexts_by_reference(citing_paper)
+        valid_reference_ids = {
+            reference.reference_id
+            for reference in citing_paper.references
+            if reference.reference_id
+        }
+        impact_selected_edges = _impact_selected_reference_edges(
+            citing_paper,
+            valid_reference_ids=valid_reference_ids,
+            paper_ids=paper_ids,
+        )
         seen_targets: set[str] = set()
         for reference in citing_paper.references:
             target_id = reference.reference_id
@@ -1360,9 +2044,20 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
             edge_count[target_id] += 1
             contexts = contexts_by_reference.get(target_id, [])
             context_count[target_id] += len(contexts)
+            impact_selection = impact_selected_edges.get(target_id)
+            impact_weight = impact_selection["weight"] if impact_selection else 0.0
+            if impact_selection:
+                impact_selected_count[target_id] += 1
+                impact_selected_raw[target_id] += impact_weight
+                if impact_selection["rank"] <= 5:
+                    impact_selected_top5_count[target_id] += 1
             if not contexts:
                 role_counts["unknown"][target_id] += 1
-                raw[target_id] += EFFECTIVE_CITATION_ROLE_WEIGHTS["unknown"]
+                edge_weight = EFFECTIVE_CITATION_ROLE_WEIGHTS["unknown"]
+                context_role_raw[target_id] += edge_weight
+                raw[target_id] += max(edge_weight, impact_weight)
+                if impact_selection and impact_selection["rank"] <= 5:
+                    effective_count[target_id] += 1
                 continue
 
             edge_roles: set[str] = set()
@@ -1376,8 +2071,11 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
                         edge_weight,
                         EFFECTIVE_CITATION_ROLE_WEIGHTS[role],
                     )
-            raw[target_id] += edge_weight
-            if edge_roles & STRONG_EFFECTIVE_CITATION_ROLES:
+            context_role_raw[target_id] += edge_weight
+            raw[target_id] += max(edge_weight, impact_weight)
+            if edge_roles & STRONG_EFFECTIVE_CITATION_ROLES or (
+                impact_selection and impact_selection["rank"] <= 5
+            ):
                 effective_count[target_id] += 1
 
     paper_id_list = [paper.paper_id for paper in papers]
@@ -1387,6 +2085,14 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
     )
     return {
         "raw": {paper_id: round(float(raw.get(paper_id, 0.0)), 6) for paper_id in paper_id_list},
+        "context_role_raw": {
+            paper_id: round(float(context_role_raw.get(paper_id, 0.0)), 6)
+            for paper_id in paper_id_list
+        },
+        "impact_selected_raw": {
+            paper_id: round(float(impact_selected_raw.get(paper_id, 0.0)), 6)
+            for paper_id in paper_id_list
+        },
         "scores": scores,
         "edge_count": {paper_id: int(edge_count.get(paper_id, 0)) for paper_id in paper_id_list},
         "context_count": {
@@ -1394,6 +2100,14 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
         },
         "effective_count": {
             paper_id: int(effective_count.get(paper_id, 0)) for paper_id in paper_id_list
+        },
+        "impact_selected_count": {
+            paper_id: int(impact_selected_count.get(paper_id, 0))
+            for paper_id in paper_id_list
+        },
+        "impact_selected_top5_count": {
+            paper_id: int(impact_selected_top5_count.get(paper_id, 0))
+            for paper_id in paper_id_list
         },
         **{
             f"{role}_count": {
@@ -1417,10 +2131,81 @@ def _effective_citation_components(papers: list[Paper]) -> dict[str, dict[str, A
                 clinical_count=role_counts["clinical"].get(paper_id, 0),
                 method_count=role_counts["method"].get(paper_id, 0),
                 dataset_count=role_counts["dataset_or_tool"].get(paper_id, 0),
+                impact_selected_top5_count=impact_selected_top5_count.get(paper_id, 0),
             )
             for paper_id in paper_id_list
         },
     }
+
+
+def _impact_selected_reference_edges(
+    citing_paper: Paper,
+    *,
+    valid_reference_ids: set[str],
+    paper_ids: set[str],
+) -> dict[str, dict[str, float | int]]:
+    edges: dict[str, dict[str, float | int]] = {}
+    for ordinal, item in enumerate(
+        _impact_selected_reference_items(citing_paper),
+        start=1,
+    ):
+        reference_id, rank, valid = _impact_selected_reference_fields(item, ordinal)
+        if not valid or reference_id not in valid_reference_ids or reference_id not in paper_ids:
+            continue
+        weight = _impact_selected_reference_weight(rank)
+        if weight <= 0:
+            continue
+        current = edges.get(reference_id)
+        if current is None or weight > float(current["weight"]):
+            edges[reference_id] = {
+                "rank": rank,
+                "weight": weight,
+            }
+    return edges
+
+
+def _impact_selected_reference_items(citing_paper: Paper) -> list[Any]:
+    sources: list[Any] = []
+    metadata = citing_paper.metadata if isinstance(citing_paper.metadata, dict) else {}
+    for key in IMPACT_SELECTED_REFERENCE_METADATA_KEYS:
+        if key in metadata:
+            sources.append(metadata[key])
+    extra = getattr(citing_paper, "__pydantic_extra__", None) or {}
+    for key in IMPACT_SELECTED_REFERENCE_METADATA_KEYS:
+        if key in extra:
+            sources.append(extra[key])
+
+    items: list[Any] = []
+    for source in sources:
+        if isinstance(source, list):
+            items.extend(source)
+        elif isinstance(source, dict):
+            nested = source.get("selected_references")
+            if isinstance(nested, list):
+                items.extend(nested)
+    return items
+
+
+def _impact_selected_reference_fields(item: Any, ordinal: int) -> tuple[str, int, bool]:
+    if isinstance(item, str):
+        return item, ordinal, True
+    if not isinstance(item, dict):
+        return "", ordinal, False
+    reference_id = str(item.get("reference_id") or item.get("paper_id") or "")
+    try:
+        rank = int(item.get("rank") or ordinal)
+    except (TypeError, ValueError):
+        rank = ordinal
+    valid = item.get("valid", True)
+    return reference_id, rank, valid is not False
+
+
+def _impact_selected_reference_weight(rank: int) -> float:
+    if rank <= 0 or rank > IMPACT_SELECTED_REFERENCE_MAX_RANK:
+        return 0.0
+    if rank in IMPACT_SELECTED_REFERENCE_TOP5_WEIGHTS:
+        return IMPACT_SELECTED_REFERENCE_TOP5_WEIGHTS[rank]
+    return IMPACT_SELECTED_REFERENCE_EXPANDED_SCALE / math.log2(rank + 1)
 
 
 def _life_science_context_roles(context: CitationContext) -> list[str]:
@@ -1595,11 +2380,16 @@ def _effective_citation_evidence_level(
     clinical_count: int,
     method_count: int,
     dataset_count: int,
+    impact_selected_top5_count: int = 0,
 ) -> str:
     if edge_count <= 0:
         return "missing"
     if guideline_count > 0 or clinical_count > 0 or method_count > 0 or dataset_count > 0:
         return "high"
+    if impact_selected_top5_count >= 2:
+        return "moderate"
+    if impact_selected_top5_count == 1:
+        return "low"
     if effective_count >= 2:
         return "moderate"
     if effective_count == 1:
@@ -1800,8 +2590,8 @@ def _evidence_first_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             6,
         ),
         "credibility_adjustment": {
-            "adjusted_sorting": True,
-            "description": "final_impact_score applies a credibility adjustment on top of impact_index_v3",
+            "adjusted_sorting": False,
+            "description": "This legacy evidence-first summary is diagnostic. final_impact_score is set by true_citation_score and effective_citation_score.",
         },
         "evidence_signal_audit": {
             "positive_signal_count_distribution": _sort_numeric_keyed_counts(
@@ -1927,26 +2717,7 @@ def _corpus_context_count(papers: list[Paper]) -> int:
 def _citation_count(paper: Paper | None) -> float | None:
     if paper is None:
         return None
-    value = _paper_extra(paper, "citation_count")
-    if value is None:
-        value = paper.metadata.get("citation_count")
-    if value is None:
-        value = _external_number(
-            paper,
-            "citation_count",
-            "cited_by_count",
-            "pubmed_citation_count",
-            "pmc_citation_count",
-            "openalex_cited_by_count",
-            "semantic_scholar_citation_count",
-            "opencitations_cited_by_count",
-        )
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return _true_citation_evidence(paper)["preferred_count"]
 
 
 def _paper_extra(paper: Paper, key: str) -> Any | None:

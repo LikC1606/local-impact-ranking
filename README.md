@@ -103,7 +103,20 @@ MODEL=local-impact-judge-source-task-dpo \
   scripts/run_user_impact.sh papers.external.jsonl runs/my-impact
 ```
 
-This validates the input, writes a model-score preflight estimate, checks the OpenAI-compatible local model server, runs `model-score-dataset` with coverage sampling, bidirectional pairwise judging, calibrated confidence, a pairwise checkpoint journal, and a report bundle, then writes `user_impact_status.json` and `user_impact_summary.md`. The summary includes claim boundaries, validation issue counts and examples, model benchmark credibility (`model_credibility_status` from `configs/model_credibility/local-impact-judge-source-task-dpo.json`), calibration credibility (`calibration_status` from `configs/calibration/sciimpact-qwen32b-heldout-p50.json`), `model_credibility_card.md`, `calibration_profile_card.md`, `model_identity_match`, `calibration_model_identity_match`, `report_decision`, top scores, evidence gaps, recommended next actions, and artifact paths. If the supplied model profile is missing, below reportable credibility, or does not match the served `MODEL`, `report_decision` is downgraded to `exploratory_only`; the same downgrade applies when the calibration profile is missing, too weak, or incompatible with the served model. The current recommended model profile is only moderate credibility, so it can be used with disclosure but not as a high-credibility standalone impact oracle. Defaults are conservative: `PAIR_BUDGET=auto`, `TARGET_PAPER_COVERAGE=0.25`, `BIDIRECTIONAL_PAIRWISE=1`, and `CALIBRATION_REPORT=configs/calibration/sciimpact-qwen32b-heldout-p50.json`.
+This validates the input, writes a model-score preflight estimate, checks the OpenAI-compatible local model server, runs `model-score-dataset` with coverage sampling, bidirectional pairwise judging, calibrated confidence, a pairwise checkpoint journal, and a report bundle, then writes `user_impact_status.json` and `user_impact_summary.md`. The summary includes claim boundaries, validation issue counts and examples, model benchmark credibility (`model_credibility_status` from `configs/model_credibility/local-impact-judge-source-task-dpo.json`), calibration credibility (`calibration_status` from `configs/calibration/sciimpact-qwen32b-heldout-p50.json`), `model_credibility_card.md`, `calibration_profile_card.md`, `model_identity_match`, `calibration_model_identity_match`, `report_decision`, citation completeness, top scores, evidence gaps, recommended next actions, and artifact paths. If the supplied model profile is missing, below reportable credibility, or does not match the served `MODEL`, `report_decision` is downgraded to `exploratory_only`; the same downgrade applies when the calibration profile is missing, too weak, or incompatible with the served model. The current recommended model profile is only moderate credibility, so it can be used with disclosure but not as a high-credibility standalone impact oracle. Defaults are conservative: `PAIR_BUDGET=auto`, `TARGET_PAPER_COVERAGE=0.25`, `BIDIRECTIONAL_PAIRWISE=1`, `AUTO_ENRICH=0`, and `CALIBRATION_REPORT=configs/calibration/sciimpact-qwen32b-heldout-p50.json`.
+
+To let the user workflow look up missing citation evidence before scoring, enable automatic enrichment:
+
+```bash
+AUTO_ENRICH=1 \
+AUTO_ENRICH_SOURCES=openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire \
+OPENALEX_EMAIL=you@example.org \
+BASE_URL=http://localhost:8000/v1 \
+MODEL=local-impact-judge-source-task-dpo \
+  scripts/run_user_impact.sh papers.jsonl runs/my-impact
+```
+
+`AUTO_ENRICH=1` runs the selected enrichment commands before validation, preflight, and scoring, then uses the final enriched JSONL as `scoring_input`. `europepmc` can recover PMID/PMCID from DOI and adds Europe PMC cited-by counts; `identity_recovery` checks whether external titles match the local paper title, quarantines wrong-paper DOI/PMID evidence, and tries to recover a high-confidence OpenAlex title match; `crossref` adds DOI-level `is-referenced-by-count`; `crossref_data_citations` adds Crossref Data Citations counts for data/software DOI impact evidence; `icite` uses explicit PMID values from `metadata.external_ids.pmid`, `metadata.pmid`, or top-level `pmid` and writes PubMed/iCite citation counts, RCR, APT, NIH percentile, and translation-related iCite fields; `ncbi_citations` uses resolved PMID/PMCID values to query NCBI cited-in links; `datacite` adds DOI-level citation, view, and download counts for DataCite-registered outputs such as Zenodo records; `datacite_events` adds DOI-to-DOI incoming event counts from DataCite Event Data and only treats `references`/`cites` relations as citation evidence; `openaire` adds OpenAIRE citation-impact indicators. Numeric local `paper_id` values are not treated as PMIDs. Repeated sources in the chain use numbered intermediate files after the first occurrence, so resume mode does not accidentally reuse an earlier stage. The optional `enrich-wikidata` command can add public Wikidata citation counts, but it is not in the default chain because Wikidata Query Service can be slow or unavailable. The optional `enrich-plos-metrics` command adds PLOS article usage metrics for audit/external-adoption evidence and does not directly change the final true/effective citation score. The run writes `auto-enrich/auto_enrich_status.json`, `auto-enrich/auto_enrich_summary.md`, and reports `auto_enrich_enabled`, `auto_enrich_sources`, `auto_enrich_output`, and `scoring_input` in `user_impact_status.json` and `user_impact_summary.md`. The default remains `AUTO_ENRICH=0` so public no-GPU reproduction and replay runs stay offline and deterministic.
 
 Useful overrides:
 
@@ -130,7 +143,7 @@ Use JSONL with one paper per line:
 {"paper_id":"p1","title":"Target Representation Paper","abstract":"representation learning","references":[{"reference_id":"r1","title":"Representation Learning","authors":[{"name":"Author A","affiliations":["Institution X"]}]}]}
 ```
 
-References should include stable `reference_id` values when available. Missing reference IDs are filled during normalization.
+References should include stable `reference_id` values when available. Missing reference IDs are filled during normalization. During `run` and `judge`, normalization also deduplicates repeated references within the same paper by DOI, OpenAlex/Semantic Scholar/PMID IDs, title-year-authors, or repeated `reference_id`; citation contexts pointing at removed duplicate IDs are remapped to the kept reference ID, source provenance is retained as `deduplicated_reference_evidence`, and the mapping is recorded in `metadata.reference_deduplication`. Citations from different target papers are not deduplicated, because they are real incoming impact evidence.
 
 For the full schema, citation-context format, and benchmark gold-label conventions, see [docs/input-schema.md](docs/input-schema.md). For the scoring formulas and credibility boundaries, see [docs/scoring-method.md](docs/scoring-method.md). For the citation data source policy, see [docs/citation-data-sources.md](docs/citation-data-sources.md). For the exact life-science effective-citation calculation, see [docs/effective-citation-calculation.md](docs/effective-citation-calculation.md).
 
@@ -140,20 +153,137 @@ To add external citation evidence from OpenAlex before scoring:
 PYTHONPATH=src python -m local_impact_ranking.cli enrich-openalex \
   --input papers.jsonl \
   --output papers.openalex.jsonl \
-  --email you@example.com
+  --email you@example.com \
+  --resume
 ```
 
-Use `papers.openalex.jsonl` as the input to `model-score-dataset`. The enrichment command uses DOI or OpenAlex IDs and writes `citation_count`, yearly citation counts, OpenAlex IDs, and `metadata.external_impact.field_year_percentile` when a work is matched.
+Use `papers.openalex.jsonl` as the input to `model-score-dataset`. The enrichment command uses DOI or OpenAlex IDs and writes `citation_count`, yearly citation counts, OpenAlex IDs, and `metadata.external_impact.field_year_percentile` when a work is matched. `--resume` reuses rows already present in the output JSONL, so interrupted large runs skip papers that were already enriched.
+
+To add NIH iCite evidence for life-science records with PMID values:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-icite \
+  --input papers.openalex.jsonl \
+  --output papers.icite.jsonl \
+  --summary-output papers.icite.summary.json \
+  --resume
+```
+
+Use `papers.icite.jsonl` when PMID coverage is strong. The command writes `metadata.external_impact.pubmed_citation_count`, `metadata.external_impact.icite_citation_count`, `metadata.external_impact.relative_citation_ratio`, `metadata.external_impact.apt`, `metadata.external_impact.nih_percentile`, and compatible iCite translation fields. `--resume` reuses rows already present in the output JSONL and excludes their PMIDs from new iCite requests.
+
+To recover PMID/PMCID values and add Europe PMC cited-by counts before iCite:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-europepmc \
+  --input papers.openalex.jsonl \
+  --output papers.europepmc.jsonl \
+  --summary-output papers.europepmc.summary.json \
+  --resume
+```
+
+To add NCBI ELink cited-in counts after PMID/PMCID recovery:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-ncbi-citations \
+  --input papers.europepmc.jsonl \
+  --output papers.ncbi-citations.jsonl \
+  --summary-output papers.ncbi-citations.summary.json \
+  --resume
+```
+
+`--resume` reuses rows already present in the output JSONL and excludes their PMID/PMCID identifiers from new NCBI ELink requests.
+
+To add Crossref DOI-level cited-by counts:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-crossref \
+  --input papers.europepmc.jsonl \
+  --output papers.crossref.jsonl \
+  --summary-output papers.crossref.summary.json \
+  --resume
+```
 
 To add Semantic Scholar citation counts and influential-citation evidence:
 
 ```bash
 PYTHONPATH=src python -m local_impact_ranking.cli enrich-semantic-scholar \
   --input papers.openalex.jsonl \
-  --output papers.semantic-scholar.jsonl
+  --output papers.semantic-scholar.jsonl \
+  --batch-size 100 \
+  --resume
 ```
 
-Use Semantic Scholar as a source-specific signal, especially for `metadata.external_impact.semantic_scholar_influential_citation_count`; do not average it with OpenAlex or OpenCitations counts. See [docs/citation-data-sources.md](docs/citation-data-sources.md) for the source comparison and reconciliation policy.
+Use Semantic Scholar as a source-specific signal, especially for `metadata.external_impact.semantic_scholar_influential_citation_count`; do not average it with OpenAlex or OpenCitations counts. Identifier lookups are split into `--batch-size` chunks so large datasets do not send one oversized request, and `--resume` reuses rows already present in the output JSONL. See [docs/citation-data-sources.md](docs/citation-data-sources.md) for the source comparison and reconciliation policy.
+
+To add DataCite evidence for DataCite-registered DOIs such as Zenodo records:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-datacite \
+  --input papers.semantic-scholar.jsonl \
+  --output papers.datacite.jsonl \
+  --summary-output papers.datacite.summary.json \
+  --resume
+```
+
+To add OpenAIRE citation-impact indicators:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-openaire \
+  --input papers.datacite.jsonl \
+  --output papers.openaire.jsonl \
+  --summary-output papers.openaire.summary.json \
+  --resume
+```
+
+`--resume` reuses rows already present in the output JSONL, so interrupted large OpenAIRE enrichment runs skip papers that were already processed.
+
+To add incoming DOI citation events from DataCite Event Data:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-datacite-events \
+  --input papers.datacite.jsonl \
+  --output papers.datacite-events.jsonl \
+  --summary-output papers.datacite-events.summary.json \
+  --resume
+```
+
+This command writes `metadata.external_impact.datacite_events_cited_by_count`, `datacite_events_references_count`, `datacite_events_cites_count`, and source-specific audit counts. `--resume` reuses rows already present in the output JSONL. Only `references` and `cites` relation types feed true-citation scoring.
+
+To add Crossref Data Citations evidence for data/software DOI reuse:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-crossref-data-citations \
+  --input papers.datacite-events.jsonl \
+  --output papers.crossref-data-citations.jsonl \
+  --summary-output papers.crossref-data-citations.summary.json \
+  --resume
+```
+
+This command writes `metadata.external_impact.crossref_data_citation_count` and `true_citation_crossref_data_citations_raw`. It is most useful for dataset/software DOI records, and usually returns zero for ordinary article DOIs. `--resume` reuses rows already present in the output JSONL.
+
+To optionally add Wikidata citation counts:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-wikidata \
+  --input papers.datacite-events.jsonl \
+  --output papers.wikidata.jsonl \
+  --summary-output papers.wikidata.summary.json \
+  --resume
+```
+
+Wikidata evidence writes `metadata.wikidata_entity`, `metadata.wikidata_title`, and `metadata.external_impact.wikidata_cited_by_count`. It is kept out of the default auto-enrichment chain because the public query endpoint can be rate-limited or slow. `--resume` reuses rows already present in the output JSONL.
+
+To optionally add PLOS article usage metrics:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli enrich-plos-metrics \
+  --input papers.wikidata.jsonl \
+  --output papers.plos-metrics.jsonl \
+  --summary-output papers.plos-metrics.summary.json \
+  --resume
+```
+
+PLOS metrics write `metadata.plos_title`, `metadata.plos_journal`, `metadata.external_impact.plos_counter_total_all`, and `metadata.external_impact.article_usage_count`. These fields support audit/external-adoption diagnostics, not the final true/effective citation score. `--resume` reuses rows already present in the output JSONL.
 
 To add DOI-level citation counts and recover dataset-internal citation graph edges from OpenCitations:
 
@@ -161,22 +291,45 @@ To add DOI-level citation counts and recover dataset-internal citation graph edg
 PYTHONPATH=src python -m local_impact_ranking.cli enrich-opencitations \
   --input papers.openalex.jsonl \
   --output papers.opencitations.jsonl \
-  --materialize-internal-edges
+  --max-incoming-edges-per-paper 500 \
+  --materialize-internal-edges \
+  --resume
 ```
 
-Use `papers.opencitations.jsonl` as the scoring input when DOI coverage is good. The command writes `metadata.external_impact.opencitations_cited_by_count`, `metadata.external_impact.opencitations_reference_count`, `metadata.opencitations_incoming_edges`, and, with `--materialize-internal-edges`, adds DOI-matched internal references so `citation_graph_score` and PageRank can use OpenCitations evidence.
+Use `papers.opencitations.jsonl` as the scoring input when DOI coverage is good. The command writes `metadata.external_impact.opencitations_cited_by_count`, `metadata.external_impact.opencitations_reference_count`, and capped `metadata.opencitations_incoming_edges` for audit. If incoming edges are truncated, it records `metadata.opencitations_incoming_edges_truncated_count`; with `--materialize-internal-edges`, DOI-matched internal references are still added so `citation_graph_score` and PageRank can use OpenCitations evidence. `--resume` reuses rows already present in the output JSONL and can materialize saved internal incoming edges without refetching that DOI.
 
-To merge external evidence you already exported from OpenAlex, BIP!, Semantic Scholar, patent, policy, media, award, or artifact-adoption sources:
+To merge external evidence you already exported from OpenAlex, BIP!, Semantic Scholar, uCite, NIH-OCC, Scopus, Web of Science, Dimensions, Lens, Google Scholar, patent, policy, media, award, or artifact-adoption sources:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli external-evidence-template \
+  --input papers.opencitations.jsonl \
+  --output external_evidence_template.csv
+```
+
+The generated CSV pre-fills any citation counts already present in the input and leaves missing source columns blank. Fill the blank columns with exported counts such as `scopus_citation_count`, `web_of_science_citation_count`, `dimensions_citation_count`, `ucite_citation_count`, or `nih_occ_citation_count`. Keep the identifier columns unchanged when possible; they are used for deterministic matching.
 
 ```bash
 PYTHONPATH=src python -m local_impact_ranking.cli import-external-evidence \
   --input papers.opencitations.jsonl \
-  --evidence external_evidence.csv \
+  --evidence external_evidence_template.csv \
   --output papers.external.jsonl \
   --summary-output runs/external-import-summary.json
 ```
 
-The importer matches by `paper_id`, DOI, OpenAlex ID, or Semantic Scholar/S2 ID and writes compatible fields under `metadata.external_impact`. Supported high-value fields include OpenAlex field/year percentile, BIP impact evidence, Semantic Scholar influential citation counts, patent and policy citations, media and award counts, GitHub/software adoption, dataset reuse, and model/download evidence.
+The importer matches by `paper_id`, DOI, OpenAlex ID, Semantic Scholar/S2 ID, PMID, or PMCID and writes compatible fields under `metadata.external_impact`. Supported high-value fields include OpenAlex field/year percentile, BIP impact evidence, Semantic Scholar influential citation counts, uCite/NIH-OCC biomedical citation counts, Scopus/Web of Science/Dimensions/Lens/Google Scholar exported citation counts, patent and policy citations, media and award counts, GitHub/software adoption, dataset reuse, and model/download evidence. These imported citation counts remain source-specific audit evidence; the scorer takes the maximum compatible true-citation source and never sums overlapping databases.
+The import summary includes `evidence_validation`, which reports evidence rows without match keys, duplicate match keys, invalid numeric cells, and negative numeric cells before scoring.
+
+For a filled external-evidence CSV, run the import, citation completeness audit, and optional no-GPU score replay in one step:
+
+```bash
+PAIRWISE_JUDGMENTS=runs/my-impact/pairwise_judgments.jsonl \
+  scripts/apply_high_recall_evidence.sh \
+    papers.opencitations.jsonl \
+    external_evidence_template.csv \
+    runs/high-recall-evidence
+```
+
+When `PAIRWISE_JUDGMENTS` is set, the script replays existing judgments and rewrites `impact_scores.csv`, score cards, the claim certificate, citation completeness reports, and a report bundle without calling the local model. It also writes before/after citation-completeness audits and `high_recall_external_evidence_status.json`, whose `citation_completeness_delta` field shows whether the filled evidence improved coverage or reduced risk.
 
 Before claiming high-credibility impact scores, check external evidence coverage:
 
@@ -188,6 +341,17 @@ PYTHONPATH=src python -m local_impact_ranking.cli external-evidence-readiness \
 ```
 
 This writes `external_evidence_readiness.json`, `external_evidence_readiness.md`, and `external_evidence_paper_coverage.csv` with DOI/OpenAlex ID coverage, OpenAlex/OpenCitations/BIP/Semantic Scholar enrichment coverage, citation and field/year percentile coverage, influential-citation coverage, patent/policy/artifact/media/award evidence coverage, materialized graph-edge counts, per-paper missing evidence labels, a missing-evidence count summary, and a decision of `ready_for_high_credibility_scoring`, `usable_with_disclosure`, or `insufficient_external_evidence`. The same readiness artifacts are also generated automatically by `run` under `reports/` and by `model-score-dataset` in its output directory.
+
+To audit whether true citation counts may be incomplete, run:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli citation-completeness-audit \
+  --input papers.external.jsonl \
+  --output runs/citation-completeness \
+  --markdown
+```
+
+This writes `citation_completeness_audit.json`, `citation_completeness_audit.md`, and `citation_completeness_papers.csv`. It reports DOI/OpenAlex/Semantic Scholar/PMID/PMCID availability, source-specific citation counts, source spread/conflict, single-source-only papers, papers without query identifiers, a 0-1 `completeness_score`, `coverage_confidence`, recommended next source actions, and whether zero citations are supported by multiple sources. It does not prove all citations were found; it separates supported zeros from missing-source and single-source cases. The same artifacts are generated automatically by `model-score-dataset` and `run_user_impact.sh`.
 
 If your data starts as CSV, convert it to the canonical JSONL format first:
 
@@ -207,7 +371,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli validate \
   --output runs/validation
 ```
 
-This writes `validation.json` and `validation.md`, flagging duplicate paper IDs, empty reference lists, duplicate reference IDs within a paper, missing titles, and out-of-range years.
+This writes `validation.json` and `validation.md`, flagging duplicate paper IDs, empty reference lists, duplicate reference IDs within a paper, missing titles, and out-of-range years. The validate command reports the raw input; the scoring workflow normalizes and deduplicates same-paper duplicate references before judging and scoring.
 
 Before model improvement or benchmark reporting, cut a held-out split:
 
@@ -356,7 +520,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
   --report-bundle
 ```
 
-This writes `pairwise_judgments.jsonl`, `impact_scores.csv`, `impact_scores.jsonl`, `impact_score_cards.json/md`, `external_evidence_readiness.json/md`, `external_evidence_paper_coverage.csv`, `impact_claim_certificate.json/md`, `impact_validity/impact_validity_evaluation.json/md` when `--validity-labels` is supplied, `direct_scores.csv/jsonl` when direct scoring is enabled, and `model_impact_report.json/md`.
+This writes `pairwise_judgments.jsonl`, `impact_scores.csv`, `impact_scores.jsonl`, `impact_score_cards.json/md`, `external_evidence_readiness.json/md`, `external_evidence_paper_coverage.csv`, `citation_completeness_audit.json/md`, `citation_completeness_papers.csv`, `impact_claim_certificate.json/md`, `impact_validity/impact_validity_evaluation.json/md` when `--validity-labels` is supplied, `direct_scores.csv/jsonl` when direct scoring is enabled, and `model_impact_report.json/md`.
 With `--report-bundle`, it also writes a shareable bundle at `runs/my-impact/report_bundle` by default; use `--report-bundle-output PATH` to choose another location.
 
 To reproduce or resume a long model-scoring run without calling the model again, replay the saved pairwise judgments:
@@ -390,15 +554,23 @@ PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
 
 Resume mode loads the existing judgments, skips already completed planned pairs, calls the model only for missing pairs, and writes a merged `pairwise_judgments.jsonl`. `--pairwise-journal` writes each newly generated judgment to a JSONL checkpoint immediately after completion; when the journal path is the same as the resume file, missing judgments are appended instead of truncating the file. The model report records `pairwise_judgment_source.type=resume`, `existing_count`, `generated_count`, and `pairwise_journal`.
 
-The raw evidence-first score is `impact_index_v3`, a dataset-local 0-100 score. It combines field/year-normalized citations, an RCR-like `relative_citation_ratio_score`, local citation-graph PageRank, citation-context quality, Semantic Scholar-compatible `influential_citation_score`, citation momentum, and optional external adoption signals such as external percentile, `bip_impact_score`, patent citations, policy citations, media mentions, award counts, GitHub/software adoption, dataset reuse, and model/download evidence. The final report score is `final_impact_score`, which applies a credibility adjustment to discount model-only or weak-evidence rows. The local Qwen pairwise score is aggregated with order-independent Rank Centrality by default and remains in `model_supported_score` / `impact_index` as a model-assisted signal, not the sole authority; `elo_rating` is retained for audit.
+The final report score is `final_impact_score`, a dataset-local 0-100 score using only two categories:
 
-`impact_index_v2` is still written as a compatibility score using `0.30 model_pairwise + 0.25 field_year_normalized_citation + 0.20 citation_graph + 0.15 citation_context_quality + 0.10 temporal_momentum`. `impact_index_v3` uses an evidence-first layer: `0.80 evidence_supported_score + 0.20 model_supported_score`. The evidence score uses `0.18 field_year_normalized_citation + 0.14 relative_citation_ratio + 0.14 citation_graph + 0.14 citation_context_quality + 0.10 influential_citation + 0.10 temporal_momentum + 0.20 external_adoption` when those signals exist. `relative_citation_ratio_score` is RCR-like, not NIH RCR: it divides article annual citation rate by a supplied expected citation rate, or by a local field/year expected rate only when that bucket has enough papers. `final_impact_score` then applies a credibility adjustment to discount model-only or weak-evidence rows. Missing signal weights are redistributed per paper, and each row includes `credible_evidence_tier`, `missing_high_value_evidence`, `evidence_quality_flag`, `uncertainty_band`, and `reportability_status` so sparse or unstable scores are visible instead of silently overclaimed.
+```text
+final_impact_score =
+  0.95 * true_citation_score
++ 0.05 * effective_citation_score
+```
+
+`true_citation_score` is the tied-rank percentile of `log1p(true_citation_raw)`. The raw count is selected from one disclosed source per paper across OpenAlex, Semantic Scholar, PubMed/iCite, uCite, NIH-OCC, Dimensions, Scopus, Web of Science, Lens, Google Scholar, OpenCitations, Crossref, Europe PMC, NCBI ELink, DataCite, OpenAIRE, Wikidata, or supplied `citation_count`. Source counts are never summed, because the same citing article can appear in multiple databases; the scorer uses the maximum compatible non-null source after identity checks and keeps every raw source field for audit. The citation completeness audit records whether the selected count is multi-source-compatible, single-source-only, conflicted, or unsupported by query identifiers. `effective_citation_score` is the tied-rank percentile of weighted incoming effective citations inside the supplied dataset. Effective citations use internal reference edges plus citation-context roles such as guideline, clinical, method/protocol, dataset/tool, supporting, negative/contrasting, background, or unknown. They can also use constrained ImpactRankings-style local-model selections from `metadata.impact_selected_references`; selected IDs must be real references of the citing paper and are fused with context evidence by a per-edge max rule instead of being added on top. The default `0.95/0.05` weighting is intentionally conservative: expanded OpCitance + NIH iCite checks showed effective-citation context is useful for explanation and sensitivity analysis, but heavier effective-citation weights reduce alignment with current RCR when context coverage is incomplete. The output also includes `score_100_true_00_effective`, `score_95_true_05_effective`, `score_90_true_10_effective`, `score_80_true_20_effective`, `score_70_true_30_effective`, `score_50_true_50_effective`, and `score_30_true_70_effective` for sensitivity analysis.
+
+The local Qwen pairwise score is still available in `model_supported_score` / `impact_index` for diagnostics. `impact_index_v2` and `impact_index_v3` are retained as legacy ablation scores with graph, context, momentum, external-adoption, and model components, but they do not directly change `final_impact_score`. Legacy `impact_index_v2` uses `0.30 model_pairwise + 0.25 field_year_normalized_citation + 0.20 citation_graph + 0.15 citation_context_quality + 0.10 temporal_momentum`. Each row writes `true_citation_raw`, `true_citation_source`, `true_citation_score`, `effective_citation_raw`, `effective_citation_count`, `effective_citation_score`, `final_score_signal_count`, `evidence_quality_flag`, `credible_evidence_tier`, `missing_high_value_evidence`, `reportability_status`, and missing-signal fields so sparse data are visible instead of silently imputed.
 
 `model_impact_report.md` includes **Impact Dimension Coverage**, mapping SciImpact-style dimensions to supported evidence: citation, patent, policy, media, award, downloads, and stars/artifact adoption. `impact_score_cards.md` gives per-paper score cards with component scores, raw evidence, citation outlier diagnostics, missing high-value evidence, confidence, and reportability.
 
 `impact_claim_certificate.md` is the report-facing claim gate. It summarizes whether the run is `validated`, `evidence_supported`, `exploratory`, or `blocked`; whether validated impact accuracy can be claimed; whether high-credibility external evidence is present; the score table coverage; and the next actions needed to strengthen the claim. Use it as the first page of a results handoff before showing detailed score cards.
 
-To fit those fusion weights against a labeled benchmark or held-out development split, run:
+To fit legacy diagnostic fusion weights against a labeled benchmark or held-out development split, run:
 
 ```bash
 PYTHONPATH=src python -m local_impact_ranking.cli calibrate-fusion-weights \
@@ -408,7 +580,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli calibrate-fusion-weights \
   --grid-step 0.1
 ```
 
-Then pass `runs/my-calibration/fusion_calibration.json` back to `model-score-dataset` with `--fusion-weights`. The run report records `fusion.weight_source`, so calibrated and default scoring runs remain auditable.
+Then pass `runs/my-calibration/fusion_calibration.json` back to `model-score-dataset` with `--fusion-weights`. The run report records `fusion.weight_source`, so calibrated and default diagnostic runs remain auditable. These weights affect legacy diagnostic scores, not the two-category `final_impact_score`.
 
 `calibrate-fusion-weights` now fits `impact_index_v3_final_components`: model pairwise, field/year citation, RCR-like citation ratio, graph, citation context, influential citation, temporal momentum, and external adoption components are all eligible for calibration. It expects a `model-score-dataset` `impact_scores.csv` with v3 component score columns such as `model_pairwise_score`, `relative_citation_ratio_score`, `influential_citation_score`, and `external_adoption_score`. Legacy SciImpact index-eval CSV files with only `impact_index` are intentionally rejected because they cannot calibrate fusion weights.
 
@@ -421,6 +593,49 @@ For budget-limited runs, prefer `--pair-sampling coverage`; it spreads early pai
 Use `--pair-budget auto --target-paper-coverage <0-1>` when you want the command to choose a pair budget from the dataset size. For example, `--target-paper-coverage 0.25` on 1000 papers selects about 125 pairwise comparisons and covers about 250 papers under coverage sampling.
 
 `model_impact_report.json/md` and `impact_scores.csv` include `ranking_quality`. Sparse runs are marked `exploratory` with paper-coverage counts, so a small smoke run is not mistaken for a complete impact ranking.
+
+To evaluate whether the current impact score is credible against current external metrics such as iCite RCR, citations/year, APT, NIH percentile, or current citation counts, run:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-current-impact-credibility \
+  --scores runs/my-impact/impact_scores.csv \
+  --labels current_external_metrics.csv \
+  --label-columns rcr,citations_per_year,apt,nih_percentile,icite_citation_count \
+  --primary-label-column rcr \
+  --top-fraction 0.1 \
+  --bootstrap-samples 1000 \
+  --permutation-samples 1000 \
+  --output runs/my-impact/current_impact_credibility
+```
+
+This writes `current_impact_credibility.json/md`. It is not a future-impact prediction benchmark. The primary label is the main credibility gate; other current metrics are corroborating evidence, so a run cannot claim high credibility by cherry-picking the best-looking external metric after evaluation. The report checks current external-metric alignment, true/effective citation coverage, and weight sensitivity across `score_100_true_00_effective`, `score_95_true_05_effective`, `score_90_true_10_effective`, `score_80_true_20_effective`, `score_70_true_30_effective`, `score_50_true_50_effective`, and `score_30_true_70_effective`.
+
+For a public high-credibility benchmark on life-science data, use NIH iCite/RCR directly. The input papers must contain PMID values under `metadata.external_ids.pmid`, `metadata.pmid`, or top-level `pmid`.
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-icite-current-benchmark \
+  --papers papers.jsonl \
+  --scores runs/my-impact/impact_scores.csv \
+  --output runs/my-impact/icite_public_benchmark \
+  --bootstrap-samples 1000 \
+  --permutation-samples 1000
+```
+
+This writes `icite_current_metrics.csv`, `icite_current_metrics_summary.json`, `current_impact_credibility.json/md`, and `icite_current_benchmark_report.json`. The benchmark uses NIH iCite `relative_citation_ratio` as the primary current-impact gate and checks corroborating iCite metrics such as citations/year, APT, NIH percentile, and current citation count.
+
+When you do not yet have private biomedical data, reproduce the public OpCitance + NIH iCite benchmark. OpCitance supplies citation-context edges, and iCite supplies current-impact labels:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli build-opcitance-icite-current-benchmark \
+  --input data/external/opcitance/opcitance_Q.txt \
+  --output runs/opcitance-icite-current-expanded \
+  --max-papers 1000 \
+  --candidate-limit 5000 \
+  --bootstrap-samples 20 \
+  --permutation-samples 20
+```
+
+The benchmark writes `opcitance_icite_papers.jsonl`, `impact_scores.csv`, `icite_current_metrics.csv`, `current_impact_credibility/`, and `opcitance_icite_benchmark_summary.md`. The current local 1000-paper run reports `high_credibility` / grade `A`, with `effective_citation_coverage_rate=0.713` and `final_impact_score` vs RCR Spearman `0.985`. The result supports the conservative default `0.95 true + 0.05 effective` score and treats effective citation as a context adjustment rather than a standalone impact target.
 
 When you have future-window labels or an external continuous impact target, validate that the score is actually aligned with that target:
 
@@ -481,7 +696,7 @@ PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan
 PYTHONPATH=src python -m local_impact_ranking.cli benchmarks plan --markdown
 ```
 
-The current registry covers PreScience, SCIDOCA 2025, SciCite/ACL-ARC/MultiCite, SciImpact, and BIP! DB/OpenCitations. `benchmarks plan` prints `recommended_order`, `ready_now`, metrics, source URLs, transfer risks, and local commands. See [docs/planning/benchmark-mapping.md](docs/planning/benchmark-mapping.md) for the mapping plan.
+The current registry covers NIH iCite/RCR, OpCitance + NIH iCite, PreScience, SCIDOCA 2025, SciCite/ACL-ARC/MultiCite, SciImpact, and BIP! DB/OpenCitations. `benchmarks plan` prints `recommended_order`, `ready_now`, metrics, source URLs, transfer risks, and local commands. See [docs/planning/benchmark-mapping.md](docs/planning/benchmark-mapping.md) for the mapping plan.
 
 Convert a locally downloaded PreScience JSONL or Parquet shard into the local paper schema:
 
@@ -945,6 +1160,23 @@ PYTHONPATH=src python -m local_impact_ranking.cli score \
 ```
 
 `run --judge-audit ...` is still supported, but `score` is the explicit no-model stage for replaying an existing audit file.
+
+To feed those constrained top-k key-reference selections into the two-category `final_impact_score`, attach the audit selections back to the paper JSONL and use that enriched file for `model-score-dataset`:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli attach-judge-selections \
+  --input papers.jsonl \
+  --judge-audit runs/qwen3/audit/judge_outputs.jsonl \
+  --output papers.with-impact-selections.jsonl
+
+PYTHONPATH=src python -m local_impact_ranking.cli model-score-dataset \
+  --input papers.with-impact-selections.jsonl \
+  --output runs/my-impact-with-effective-selections \
+  --pairwise-judgments runs/my-impact/pairwise_judgments.jsonl \
+  --report-bundle
+```
+
+The attached selections are stored under `metadata.impact_selected_references`. The effective-citation scorer accepts only selected IDs that are real references of the citing paper and papers in the supplied dataset. If citation-context evidence and selected-reference evidence both exist on the same edge, the scorer uses the stronger per-edge weight rather than adding both.
 
 ## Standard 100-Paper Pilot
 

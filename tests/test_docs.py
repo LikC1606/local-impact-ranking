@@ -21,6 +21,7 @@ def test_input_schema_doc_covers_required_and_benchmark_fields():
     assert "gold_reference_ids" in text
     assert "prescience_positive_reference_ids" in text
     assert "convert-csv" in text
+    assert "citation-completeness-audit" in text
 
 
 def test_readme_links_to_input_schema_doc():
@@ -55,7 +56,10 @@ def test_scoring_method_doc_covers_versions_weights_and_limits():
     assert "impact_index_v2" in text
     assert "evidence_supported_score" in text
     assert "final_impact_score" in text
-    assert "credibility-adjusted" in text
+    assert "true_citation_score" in text
+    assert "effective_citation_score" in text
+    assert "true_citation_source" in text
+    assert "true_effective_citation_impact_v1" in text
     assert "external_adoption_score" in text
     assert "influential_citation_score" in text
     assert "bip_impact_score" in text
@@ -98,6 +102,9 @@ def test_evaluation_method_doc_covers_metrics_and_limits():
     assert "fixed_count" in text
     assert "broken_count" in text
     assert "judge_beats_all_baselines" in text
+    assert "Current Impact Credibility" in text
+    assert "evaluate-current-impact-credibility" in text
+    assert "current_impact_credibility.json" in text
     assert "evaluate-impact-validity" in text
     assert "backtest-impact-validity" in text
     assert "derive-future-impact-labels" in text
@@ -148,6 +155,9 @@ def test_benchmark_mapping_doc_covers_plan_command_and_public_sources():
     text = Path("docs/planning/benchmark-mapping.md").read_text(encoding="utf-8")
 
     assert "benchmarks plan" in text
+    assert "OpCitance + NIH iCite Current Impact" in text
+    assert "build-opcitance-icite-current-benchmark" in text
+    assert "effective_citation_coverage_rate=0.713" in text
     assert "https://huggingface.co/datasets/allenai/prescience" in text
     assert "pairwise_accuracy" in text
     assert "project-readiness" in text
@@ -158,6 +168,8 @@ def test_readme_documents_benchmark_plan_command():
 
     assert "benchmarks plan" in text
     assert "ready_now" in text
+    assert "build-opcitance-icite-current-benchmark" in text
+    assert "opcitance_icite_benchmark_summary.md" in text
 
 
 def test_readme_documents_model_score_dataset_final_score():
@@ -165,6 +177,8 @@ def test_readme_documents_model_score_dataset_final_score():
 
     assert "model-score-dataset" in text
     assert "model-score-preflight" in text
+    assert "evaluate-current-impact-credibility" in text
+    assert "current_impact_credibility.json/md" in text
     assert "total_model_request_count" in text
     assert "planned_pair_count" in text
     assert "enrich-openalex" in text
@@ -198,8 +212,14 @@ def test_readme_documents_model_score_dataset_final_score():
     assert "--allowed-slice-regression 0.06" in text
     assert "mean bidirectional selected accuracy" in text
     assert "mean direct accuracy" in text
-    assert "0.80 evidence_supported_score" in text
-    assert "credibility adjustment" in text
+    assert "0.95 * true_citation_score" in text
+    assert "0.05 * effective_citation_score" in text
+    assert "true_citation_source" in text
+    assert "score_95_true_05_effective" in text
+    assert "score_90_true_10_effective" in text
+    assert "score_50_true_50_effective" in text
+    assert "score_70_true_30_effective" in text
+    assert "legacy ablation scores" in text
     assert "0.30 model_pairwise" in text
     assert "calibrate-fusion-weights" in text
     assert "--fusion-weights" in text
@@ -211,6 +231,8 @@ def test_readme_documents_model_score_dataset_final_score():
     assert "reportability_basis" in text
     assert "legacy_reportability_status" in text
     assert "external_evidence_readiness.json" in text
+    assert "citation_completeness_audit.json" in text
+    assert "citation-completeness-audit" in text
     assert "evaluate-impact-validity" in text
     assert "backtest-impact-validity" in text
     assert "derive-future-impact-labels" in text
@@ -239,11 +261,29 @@ def test_citation_data_sources_doc_covers_source_roles_and_reconciliation():
     text = Path("docs/citation-data-sources.md").read_text(encoding="utf-8")
 
     assert "OpenAlex" in text
+    assert "citation-completeness-audit" in text
+    assert "external-evidence-template" in text
+    assert "multi_source_compatible" in text
     assert "Semantic Scholar" in text
     assert "OpenCitations" in text
     assert "PubMed/iCite" in text
     assert "Crossref" in text
+    assert "Crossref Data Citations" in text
+    assert "DataCite Events" in text
+    assert "Wikidata" in text
+    assert "PLOS Metrics" in text
+    assert "uCite" in text
+    assert "NIH-OCC" in text
+    assert "Scopus" in text
+    assert "Web of Science" in text
+    assert "Google Scholar" in text
     assert "semantic_scholar_influential_citation_count" in text
+    assert "crossref_data_citation_count" in text
+    assert "datacite_events_cited_by_count" in text
+    assert "wikidata_cited_by_count" in text
+    assert "ucite_citation_count" in text
+    assert "nih_occ_citation_count" in text
+    assert "google_scholar_citation_count" in text
     assert "field_year_normalized_citation_score" in text
     assert "Do not average citation counts" in text
     assert "citation_count_ratio" in text
@@ -260,6 +300,9 @@ def test_effective_citation_calculation_doc_covers_formula_and_outputs():
     assert "effective_citation_count" in text
     assert "effective_citation_coverage" in text
     assert "effective_citation_evidence_level" in text
+    assert "metadata.impact_selected_references" in text
+    assert "effective_citation_impact_selected_raw" in text
+    assert "per-edge max rule" in text
     assert "guideline" in text
     assert "clinical" in text
     assert "method" in text
@@ -321,6 +364,21 @@ def test_readme_documents_builtin_calibration_profile():
     text = Path("README.md").read_text(encoding="utf-8")
 
     assert "model-score-dataset" in text
+    assert "AUTO_ENRICH=1" in text
+    assert "AUTO_ENRICH_SOURCES=openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire" in text
+    assert "auto_enrich_status.json" in text
+    assert "scoring_input" in text
+    assert "enrich-icite" in text
+    assert "enrich-europepmc" in text
+    assert "identity_recovery" in text
+    assert "enrich-crossref" in text
+    assert "enrich-crossref-data-citations" in text
+    assert "enrich-ncbi-citations" in text
+    assert "enrich-datacite" in text
+    assert "enrich-datacite-events" in text
+    assert "enrich-openaire" in text
+    assert "enrich-wikidata" in text
+    assert "enrich-plos-metrics" in text
     assert "configs/calibration/sciimpact-qwen32b-heldout-p50.json" in text
     assert "compatible_models" in text
     assert "calibration_profile_card.md" in text
@@ -335,7 +393,8 @@ def test_project_summary_report_matches_current_deliverable():
     assert "run_user_impact.sh" in text
     assert "user_impact_summary.md" in text
     assert "report_decision" in text
-    assert "impact_index_v3" in text
+    assert "final_impact_score" in text
+    assert "impact_index_v2/v3" in text
     assert "local-impact-judge-source-task-dpo" in text
     assert "model_smoke=passed" in text
     assert "473 passed" in text
@@ -351,6 +410,13 @@ def test_docs_document_responsible_metrics_upgrade():
     assert "Impact Dimension Coverage" in readme
     assert "citation outlier diagnostics" in readme
     assert "import-external-evidence" in readme
+    assert "external-evidence-template" in readme
+    assert "scripts/apply_high_recall_evidence.sh" in readme
+    assert "citation_completeness_delta" in readme
+    assert "evidence_validation" in readme
+    assert "PMID, or PMCID" in readme
+    assert "uCite/NIH-OCC biomedical citation counts" in readme
+    assert "Scopus/Web of Science/Dimensions/Lens/Google Scholar" in readme
     assert "Influential Citation" in scoring
     assert "BIP" in scoring
     assert "self_citation_risk" in scoring

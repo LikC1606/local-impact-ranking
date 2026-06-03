@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
+
 
 FIELDNAMES = [
     "run",
@@ -44,7 +46,7 @@ def write_runs_index(runs_root: str | Path, output: str | Path) -> dict[str, Any
     with (destination / "index.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
         writer.writeheader()
-        writer.writerows(report["runs"])
+        writer.writerows(sanitize_csv_row(row) for row in report["runs"])
     (destination / "index.md").write_text(
         render_runs_index_markdown(report),
         encoding="utf-8",

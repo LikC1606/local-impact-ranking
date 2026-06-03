@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.model_impact_index import aggregate_pairwise_impact_index
 from local_impact_ranking.models import Paper
 from local_impact_ranking.pairwise_evaluation import write_pairwise_evaluation
@@ -186,4 +187,6 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row[field] for field in fieldnames})
+            writer.writerow(
+                sanitize_csv_row({field: row[field] for field in fieldnames})
+            )

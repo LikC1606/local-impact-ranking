@@ -20,13 +20,13 @@
 
 系统输出的是 **dataset-local paper impact index**：只评价用户给定论文集合内部的相对影响力，不直接宣称全球科学影响力。
 
-当前主分数是 `impact_index_v3`，最终汇报分数是 `final_impact_score`。
+当前主分数是 `final_impact_score`。它只使用两类证据：真实引用数和有效引用数。
 
 核心设计：
 
-- 本地模型负责 pairwise 影响力判断，默认推荐模型名为 `local-impact-judge-source-task-dpo`。
-- 模型判断不是唯一依据，最终分数采用 evidence-first 融合。
-- 可用证据包括：模型 pairwise score、field/year citation score、RCR-like citation ratio、citation graph、citation context、influential citation、temporal momentum、外部 adoption/patent/policy/media/award/artifact 信号。
+- 本地模型负责辅助识别引用上下文和有效引用角色，默认推荐模型名为 `local-impact-judge-source-task-dpo`。
+- 模型判断、图分数、外部 adoption/patent/policy/media/award/artifact 信号只作为诊断和消融字段，不直接进入最终影响力分数。
+- 最终分数公式是 `0.95 * true_citation_score + 0.05 * effective_citation_score`，并输出 `1.00/0.00`、`0.95/0.05`、`0.90/0.10`、`0.80/0.20`、`0.70/0.30`、`0.50/0.50`、`0.30/0.70` 等敏感性分数。
 - 每篇论文输出 `credible_evidence_tier`、`missing_high_value_evidence`、`reportability_status`、`validity_confidence` 和 claim certificate。
 - 用户入口会生成 `report_decision`，直接说明结果是 `report_with_disclosure`、`exploratory_only`、`validated_report` 还是 `blocked`。
 - 用户入口会生成 `model_credibility_card.md/json`，把当前模型的 SciImpact 跨 seed 证据、弱切片和可声明边界放进交付包；模型证据缺失、低可信或与实际 `MODEL` 不匹配时，`report_decision` 会降级为 `exploratory_only`。
@@ -73,7 +73,7 @@ MODEL=local-impact-judge-source-task-dpo \
 已实现的关键能力：
 
 - 数据输入：JSONL、CSV 转换、输入校验、OpenAlex/OpenCitations/外部证据导入。
-- 影响力评分：`impact_index_v3` evidence-first 分数、`final_impact_score` 可信度调整分数。
+- 影响力评分：`final_impact_score` 两类引用分数，外加 `impact_index_v2/v3` legacy diagnostic 分数。
 - 模型部署：支持本地 OpenAI-compatible vLLM 服务。
 - 模型推荐：当前推荐 `local-impact-judge-source-task-dpo`，adapter 为 `qwen32b-source-task-sft16k4096-dpo16k1024-128step`。
 - 长任务可靠性：pairwise replay、resume、pairwise journal。

@@ -23,6 +23,87 @@ class BenchmarkSpec:
 
 
 BENCHMARKS: dict[str, BenchmarkSpec] = {
+    "icite_current": BenchmarkSpec(
+        key="icite_current",
+        name="NIH iCite / RCR Current Impact",
+        purpose="Public current article-level impact validation for PubMed-indexed life-science papers.",
+        pipeline_layers=("external_validation", "credibility", "baselines"),
+        preferred_input="PMID-matched life-science papers plus a generated impact_scores.csv.",
+        notes="Best public benchmark for current-impact credibility when the dataset is biomedical.",
+        source_url="https://icite.od.nih.gov/",
+        paper_url="https://doi.org/10.1371/journal.pbio.1002541",
+        implementation_status="ready",
+        recommended_order=1,
+        evaluation_metrics=(
+            "spearman",
+            "kendall_tau",
+            "pairwise_accuracy",
+            "ndcg@k",
+            "coverage_rate",
+            "weight_sensitivity",
+        ),
+        evaluation_role=(
+            "Primary public current-impact benchmark for testing whether "
+            "final_impact_score aligns with NIH RCR and related iCite metrics."
+        ),
+        local_command=(
+            "PYTHONPATH=src python -m local_impact_ranking.cli "
+            "evaluate-icite-current-benchmark --papers papers.jsonl "
+            "--scores runs/my-impact/impact_scores.csv "
+            "--output runs/my-impact/icite_public_benchmark"
+        ),
+        transfer_risk=(
+            "Biomedical/PubMed scope only, and citation-derived labels are not "
+            "fully independent of true citation counts; use RCR as the primary "
+            "field-normalized current-impact gate and disclose coverage."
+        ),
+    ),
+    "opcitance_icite": BenchmarkSpec(
+        key="opcitance_icite",
+        name="OpCitance + NIH iCite Current Impact",
+        purpose=(
+            "Public biomedical current-impact benchmark combining citation "
+            "contexts from OpCitance with NIH iCite/RCR labels."
+        ),
+        pipeline_layers=("contexts", "external_validation", "credibility", "baselines"),
+        preferred_input=(
+            "OpCitance TSV rows with citing/cited PMIDs; the builder creates "
+            "paper JSONL, impact scores, iCite labels, and credibility reports."
+        ),
+        notes=(
+            "Best ready public dataset for reproducing the current-impact score "
+            "when no private paper corpus is available."
+        ),
+        source_url="https://databank.illinois.edu/datasets/IDB-7312599",
+        paper_url="https://doi.org/10.1038/s41597-023-02134-x",
+        implementation_status="ready",
+        recommended_order=2,
+        evaluation_metrics=(
+            "spearman",
+            "kendall_tau",
+            "pairwise_accuracy",
+            "ndcg@k",
+            "effective_citation_coverage",
+            "citation_context_count",
+            "weight_sensitivity",
+        ),
+        evaluation_role=(
+            "Executable public current-impact benchmark for testing the full "
+            "true/effective citation score, including citation-context coverage."
+        ),
+        local_command=(
+            "PYTHONPATH=src python -m local_impact_ranking.cli "
+            "build-opcitance-icite-current-benchmark "
+            "--input data/external/opcitance/opcitance_Q.txt "
+            "--output runs/opcitance-icite-current-expanded "
+            "--max-papers 1000 --candidate-limit 5000"
+        ),
+        transfer_risk=(
+            "Biomedical/PubMed/PMC scope only. iCite labels validate current "
+            "citation-normalized impact; they do not prove future impact or "
+            "non-citation social/translational impact."
+        ),
+    ),
     "prescience": BenchmarkSpec(
         key="prescience",
         name="PreScience",
@@ -33,7 +114,7 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         source_url="https://huggingface.co/datasets/allenai/prescience",
         paper_url="https://arxiv.org/abs/2602.20459",
         implementation_status="ready",
-        recommended_order=1,
+        recommended_order=3,
         evaluation_metrics=("hit@k", "mrr", "ndcg@k", "recall@k"),
         evaluation_role=(
             "Closest executable gold benchmark for whether the judge selects "
@@ -55,7 +136,7 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         source_url="https://github.com/SCIDOCA-2025/SCIDOCA-2025",
         paper_url="",
         implementation_status="planned",
-        recommended_order=3,
+        recommended_order=5,
         evaluation_metrics=("recall@k", "mrr", "masked_citation_accuracy"),
         evaluation_role=(
             "Citation-discovery stress test for context-aware candidate selection "
@@ -77,7 +158,7 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         source_url="https://github.com/allenai/scicite",
         paper_url="https://aclanthology.org/N19-1361/",
         implementation_status="ready",
-        recommended_order=2,
+        recommended_order=4,
         evaluation_metrics=("context_support_rate", "method_context_rate", "label_coverage"),
         evaluation_role=(
             "Auxiliary proxy check that influential selections are supported by "
@@ -99,7 +180,7 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         source_url="https://flypig23.github.io/sciimpact-homepage/",
         paper_url="https://arxiv.org/abs/2604.17141",
         implementation_status="adapter_ready",
-        recommended_order=4,
+        recommended_order=6,
         evaluation_metrics=(
             "pairwise_accuracy",
             "non_tie_pairwise_accuracy",
@@ -130,7 +211,7 @@ BENCHMARKS: dict[str, BenchmarkSpec] = {
         source_url="https://zenodo.org/records/10804822",
         paper_url="https://arxiv.org/abs/2101.12001",
         implementation_status="external_baseline",
-        recommended_order=5,
+        recommended_order=7,
         evaluation_metrics=("spearman", "kendall_tau", "top_n_overlap", "field_year_normalized_correlation"),
         evaluation_role=(
             "External bibliometric calibration against citation count, PageRank, "
@@ -153,6 +234,13 @@ def get_benchmark(name: str) -> BenchmarkSpec:
     key = name.lower().replace("-", "").replace("_", "")
     lookup = {
         "prescience": "prescience",
+        "icite": "icite_current",
+        "icitecurrent": "icite_current",
+        "nihicite": "icite_current",
+        "rcr": "icite_current",
+        "opcitance": "opcitance_icite",
+        "opcitanceicite": "opcitance_icite",
+        "citance": "opcitance_icite",
         "scidoca2025": "scidoca2025",
         "scicite": "scicite",
         "aclarc": "scicite",
@@ -177,8 +265,9 @@ def benchmark_plan() -> dict[str, Any]:
             for spec in specs
             if spec.implementation_status in {"ready", "adapter_ready"}
         ],
-        "primary_benchmark": "prescience",
-        "direct_impact_benchmark": "sciimpact",
+        "primary_benchmark": "icite_current",
+        "direct_impact_benchmark": "icite_current",
+        "pairwise_impact_benchmark": "sciimpact",
         "baseline_anchor": "bib_bases",
         "benchmarks": [_spec_to_plan_item(spec) for spec in specs],
     }

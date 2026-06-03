@@ -136,6 +136,90 @@ def test_enrich_papers_with_opencitations_adds_counts_and_internal_edges(tmp_pat
     assert p2_metadata["external_impact"]["opencitations_cited_by_count"] == 1.0
 
 
+def test_enrich_papers_with_opencitations_caps_stored_incoming_edges(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "paper_id": "target",
+                        "title": "Cited paper",
+                        "doi": "10.1000/target",
+                        "references": [],
+                    }
+                ),
+                *[
+                    json.dumps(
+                        {
+                            "paper_id": f"source-{index}",
+                            "title": f"Citing paper {index}",
+                            "doi": f"10.1000/source-{index}",
+                            "references": [],
+                        }
+                    )
+                    for index in range(3)
+                ],
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payloads = {
+        "https://api.opencitations.net/index/v2/citation-count/doi:10.1000%2Ftarget": [
+            {"count": "3"}
+        ],
+        "https://api.opencitations.net/index/v2/reference-count/doi:10.1000%2Ftarget": [
+            {"count": "12"}
+        ],
+        "https://api.opencitations.net/index/v2/citations/doi:10.1000%2Ftarget": [
+            {
+                "oci": f"oci-{index}",
+                "citing": f"doi:10.1000/source-{index}",
+                "cited": "doi:10.1000/target",
+            }
+            for index in range(3)
+        ],
+    }
+    for index in range(3):
+        payloads[
+            "https://api.opencitations.net/index/v2/citation-count/"
+            f"doi:10.1000%2Fsource-{index}"
+        ] = [{"count": "0"}]
+        payloads[
+            "https://api.opencitations.net/index/v2/reference-count/"
+            f"doi:10.1000%2Fsource-{index}"
+        ] = [{"count": "0"}]
+        payloads[
+            "https://api.opencitations.net/index/v2/citations/"
+            f"doi:10.1000%2Fsource-{index}"
+        ] = []
+    client = OpenCitationsClient(payloads)
+
+    summary = enrich_papers_with_opencitations(
+        input_path,
+        output_path,
+        client=client,
+        include_edges=True,
+        max_incoming_edges_per_paper=2,
+    )
+
+    records = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    target_metadata = {record["paper_id"]: record for record in records}["target"][
+        "metadata"
+    ]
+    assert summary["internal_incoming_edge_count"] == 3
+    assert summary["stored_incoming_edge_count"] == 2
+    assert summary["truncated_incoming_edge_count"] == 1
+    assert len(target_metadata["opencitations_incoming_edges"]) == 2
+    assert target_metadata["opencitations_incoming_edges_truncated_count"] == 1
+
+
 def test_enrich_papers_with_opencitations_preserves_unqueryable_rows(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_path = tmp_path / "enriched.jsonl"
@@ -229,6 +313,100 @@ def test_enrich_papers_with_opencitations_can_materialize_internal_graph_edges(t
         }
     ]
     assert by_id["p2"]["metadata"]["opencitations_materialized_edge_count"] == 1
+
+
+def test_enrich_papers_with_opencitations_can_resume_and_materialize_saved_edges(
+    tmp_path,
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "paper_id": "p1",
+                        "title": "Cited paper",
+                        "doi": "10.1000/cited",
+                        "references": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "paper_id": "p2",
+                        "title": "Citing paper",
+                        "doi": "10.1000/citing",
+                        "references": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Cited paper",
+                "doi": "10.1000/cited",
+                "references": [],
+                "metadata": {
+                    "opencitations_enriched": True,
+                    "opencitations_incoming_edges": [
+                        {
+                            "source_paper_id": "p2",
+                            "source_doi": "10.1000/citing",
+                            "target_paper_id": "p1",
+                            "target_doi": "10.1000/cited",
+                        }
+                    ],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = OpenCitationsClient(
+        {
+            "https://api.opencitations.net/index/v2/citation-count/doi:10.1000%2Fciting": [
+                {"count": "1"}
+            ],
+            "https://api.opencitations.net/index/v2/reference-count/doi:10.1000%2Fciting": [
+                {"count": "20"}
+            ],
+            "https://api.opencitations.net/index/v2/citations/doi:10.1000%2Fciting": [],
+        }
+    )
+
+    summary = enrich_papers_with_opencitations(
+        input_path,
+        output_path,
+        client=client,
+        resume=True,
+        materialize_internal_edges=True,
+    )
+
+    records = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    by_id = {record["paper_id"]: record for record in records}
+    requested_urls = [request["url"] for request in client.requests]
+    assert summary["resume"] is True
+    assert summary["resumed_count"] == 1
+    assert summary["matched_count"] == 1
+    assert all("10.1000%2Fcited" not in url for url in requested_urls)
+    assert by_id["p2"]["references"] == [
+        {
+            "reference_id": "p1",
+            "title": "Cited paper",
+            "doi": "10.1000/cited",
+            "external_ids": {"doi": "10.1000/cited"},
+            "raw_citation": "OpenCitations internal DOI edge",
+        }
+    ]
 
 
 def test_materialized_internal_edges_feed_citation_graph_score(tmp_path):

@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.judge import JudgeResult
 from local_impact_ranking.models import Paper
 from local_impact_ranking.scoring import InfluenceScores
@@ -43,15 +44,17 @@ def export_scoring_edges_csv(
         writer.writeheader()
         for row in rows:
             writer.writerow(
-                {
-                    "target_paper_id": row["target_paper_id"],
-                    "reference_id": row["reference_id"],
-                    "rank": row["rank"],
-                    "rank_weight": f"{row['rank_weight']:.6f}",
-                    "context_count": row["context_count"],
-                    "context_weight": f"{row['context_weight']:.6f}",
-                    "credit": f"{row['credit']:.6f}",
-                }
+                sanitize_csv_row(
+                    {
+                        "target_paper_id": row["target_paper_id"],
+                        "reference_id": row["reference_id"],
+                        "rank": row["rank"],
+                        "rank_weight": f"{row['rank_weight']:.6f}",
+                        "context_count": row["context_count"],
+                        "context_weight": f"{row['context_weight']:.6f}",
+                        "credit": f"{row['credit']:.6f}",
+                    }
+                )
             )
 
 
@@ -82,14 +85,16 @@ def _write_score_table(
             normalized_score = (score / max_score * 100.0) if max_score > 0 else 0.0
             percentile = ((total - rank + 1) / total * 100.0) if total else 0.0
             writer.writerow(
-                {
-                    "rank": rank,
-                    "id": identifier,
-                    "score": f"{score:.6f}",
-                    **_score_detail_row(identifier, score_details),
-                    "normalized_score": f"{normalized_score:.6f}",
-                    "percentile": f"{percentile:.6f}",
-                }
+                sanitize_csv_row(
+                    {
+                        "rank": rank,
+                        "id": identifier,
+                        "score": f"{score:.6f}",
+                        **_score_detail_row(identifier, score_details),
+                        "normalized_score": f"{normalized_score:.6f}",
+                        "percentile": f"{percentile:.6f}",
+                    }
+                )
             )
 
 
@@ -199,18 +204,28 @@ def export_human_audit_sample(
             for selection in sorted(result.selected_references, key=lambda item: item.rank):
                 reference = references_by_id.get(selection.reference_id)
                 writer.writerow(
-                    {
-                        "target_paper_id": paper.paper_id,
-                        "target_title": paper.title,
-                        "reference_id": selection.reference_id,
-                        "reference_title": reference.title if reference else "",
-                        "reference_year": reference.year if reference and reference.year else "",
-                        "reference_venue": reference.venue if reference and reference.venue else "",
-                        "rank": selection.rank,
-                        "confidence": f"{selection.confidence:.6f}",
-                        "valid": selection.valid,
-                        "rationale": selection.rationale,
-                        "human_importance_label": "",
-                        "human_notes": "",
-                    }
+                    sanitize_csv_row(
+                        {
+                            "target_paper_id": paper.paper_id,
+                            "target_title": paper.title,
+                            "reference_id": selection.reference_id,
+                            "reference_title": reference.title if reference else "",
+                            "reference_year": (
+                                reference.year
+                                if reference and reference.year
+                                else ""
+                            ),
+                            "reference_venue": (
+                                reference.venue
+                                if reference and reference.venue
+                                else ""
+                            ),
+                            "rank": selection.rank,
+                            "confidence": f"{selection.confidence:.6f}",
+                            "valid": selection.valid,
+                            "rationale": selection.rationale,
+                            "human_importance_label": "",
+                            "human_notes": "",
+                        }
+                    )
                 )

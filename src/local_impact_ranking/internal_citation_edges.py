@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -12,12 +13,42 @@ import httpx
 
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import Paper
+from local_impact_ranking.normalize import normalize_doi
 from local_impact_ranking.openalex_enrichment import paper_doi
 
 
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.IGNORECASE)
 MIN_TITLE_MATCH_LENGTH = 20
+MIN_TITLE_TOKEN_LENGTH = 3
+MAX_TITLE_BLOCKING_TOKENS = 6
+MAX_TITLE_FUZZY_CANDIDATES = 128
+MAX_TITLE_BLOCK_POSTINGS = 256
+TITLE_PHRASE_BLOCK_SIZES = (4, 3)
 OPENALEX_WORKS_URL = "https://api.openalex.org/works"
+TITLE_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "into",
+        "onto",
+        "that",
+        "this",
+        "these",
+        "those",
+        "using",
+        "based",
+        "study",
+        "studies",
+        "analysis",
+        "effect",
+        "effects",
+        "role",
+        "roles",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +58,162 @@ class InternalCitationMatch:
     target_doi: str | None
     method: str
     confidence: float
+
+
+@dataclass(frozen=True)
+class TitleEntry:
+    normalized_title: str
+    paper: Paper
+    tokens: frozenset[str]
+    token_sequence: tuple[str, ...]
+
+
+@dataclass
+class TitleMatchIndex:
+    entries: list[TitleEntry]
+    exact_titles: dict[str, list[TitleEntry]]
+    phrase_entries: dict[str, list[int]]
+    token_entries: dict[str, list[int]]
+
+    @classmethod
+    def from_papers(cls, papers: list[Paper]) -> TitleMatchIndex:
+        entries: list[TitleEntry] = []
+        exact_titles: dict[str, list[TitleEntry]] = defaultdict(list)
+        phrase_entries: dict[str, list[int]] = defaultdict(list)
+        token_entries: dict[str, list[int]] = defaultdict(list)
+        for paper in papers:
+            normalized = _normalize_title(paper.title)
+            if len(normalized) < MIN_TITLE_MATCH_LENGTH:
+                continue
+            token_sequence = tuple(_significant_title_tokens(normalized))
+            entry = TitleEntry(
+                normalized_title=normalized,
+                paper=paper,
+                tokens=frozenset(token_sequence),
+                token_sequence=token_sequence,
+            )
+            entry_id = len(entries)
+            entries.append(entry)
+            exact_titles[normalized].append(entry)
+            for block in _title_phrase_blocks(token_sequence):
+                phrase_entries[block].append(entry_id)
+            for token in entry.tokens:
+                token_entries[token].append(entry_id)
+        return cls(
+            entries=entries,
+            exact_titles=dict(exact_titles),
+            phrase_entries=dict(phrase_entries),
+            token_entries=dict(token_entries),
+        )
+
+    def exact_candidates(self, normalized_title: str) -> list[TitleEntry]:
+        return self.exact_titles.get(normalized_title, [])
+
+    def fuzzy_candidates(self, normalized_title: str) -> list[TitleEntry]:
+        reference_tokens = _significant_title_tokens(normalized_title)
+        if not reference_tokens:
+            return []
+
+        phrase_candidates = self._phrase_candidates(
+            reference_tokens,
+            normalized_title,
+        )
+        if phrase_candidates:
+            return phrase_candidates
+        return self._token_candidates(reference_tokens, normalized_title)
+
+    def _phrase_candidates(
+        self,
+        reference_tokens: list[str],
+        normalized_title: str,
+    ) -> list[TitleEntry]:
+        phrase_blocks = self._bounded_posting_keys(
+            self.phrase_entries,
+            _title_phrase_blocks(tuple(reference_tokens)),
+        )
+        if not phrase_blocks:
+            return []
+        votes: Counter[int] = Counter()
+        for block in phrase_blocks:
+            votes.update(self.phrase_entries[block])
+        return self._rank_candidates(
+            votes,
+            reference_tokens=reference_tokens,
+            normalized_title=normalized_title,
+            min_shared_tokens=2,
+        )
+
+    def _token_candidates(
+        self,
+        reference_tokens: list[str],
+        normalized_title: str,
+    ) -> list[TitleEntry]:
+        query_tokens = self._bounded_posting_keys(
+            self.token_entries,
+            reference_tokens,
+        )
+        if not query_tokens:
+            return []
+
+        votes: Counter[int] = Counter()
+        for token in query_tokens:
+            votes.update(self.token_entries[token])
+
+        min_shared_tokens = 2 if len(set(reference_tokens)) >= 4 else 1
+        return self._rank_candidates(
+            votes,
+            reference_tokens=reference_tokens,
+            normalized_title=normalized_title,
+            min_shared_tokens=min_shared_tokens,
+        )
+
+    def _rank_candidates(
+        self,
+        votes: Counter[int],
+        *,
+        reference_tokens: list[str],
+        normalized_title: str,
+        min_shared_tokens: int,
+    ) -> list[TitleEntry]:
+        reference_token_set = set(reference_tokens)
+        ranked_candidates = []
+        for entry_id, selected_shared_count in votes.items():
+            entry = self.entries[entry_id]
+            shared_tokens = len(reference_token_set & entry.tokens)
+            if shared_tokens < min_shared_tokens:
+                continue
+            length_delta = abs(len(normalized_title) - len(entry.normalized_title))
+            ranked_candidates.append(
+                (
+                    selected_shared_count,
+                    shared_tokens,
+                    -length_delta,
+                    -entry_id,
+                    entry,
+                )
+            )
+
+        ranked_candidates.sort(reverse=True)
+        return [
+            item[-1]
+            for item in ranked_candidates[:MAX_TITLE_FUZZY_CANDIDATES]
+        ]
+
+    @staticmethod
+    def _bounded_posting_keys(
+        index: dict[str, list[int]],
+        keys: list[str],
+    ) -> list[str]:
+        available_keys = [(len(index[key]), key) for key in keys if key in index]
+        if not available_keys:
+            return []
+        available_keys.sort()
+        bounded_keys = [
+            key
+            for posting_count, key in available_keys
+            if posting_count <= MAX_TITLE_BLOCK_POSTINGS
+        ]
+        return bounded_keys[:MAX_TITLE_BLOCKING_TOKENS]
 
 
 def materialize_internal_citation_edges(
@@ -44,7 +231,7 @@ def materialize_internal_citation_edges(
     papers = load_papers_jsonl(input_path)
     paper_ids = {paper.paper_id for paper in papers}
     doi_index = _doi_index(papers)
-    title_entries = _title_entries(papers)
+    title_index = TitleMatchIndex.from_papers(papers)
     summary: dict[str, Any] = {
         "paper_count": len(papers),
         "reference_count": 0,
@@ -91,7 +278,7 @@ def materialize_internal_citation_edges(
                 source_paper=paper,
                 reference=reference,
                 doi_index=doi_index,
-                title_entries=title_entries,
+                title_index=title_index,
                 title_threshold=title_threshold,
                 title_margin=title_margin,
             )
@@ -333,7 +520,7 @@ def _match_reference(
     source_paper: Paper,
     reference: dict[str, Any],
     doi_index: dict[str, Paper],
-    title_entries: list[tuple[str, Paper]],
+    title_index: TitleMatchIndex,
     title_threshold: float,
     title_margin: float,
 ) -> InternalCitationMatch | str | None:
@@ -356,10 +543,33 @@ def _match_reference(
     if len(normalized_reference_title) < MIN_TITLE_MATCH_LENGTH:
         return None
 
+    exact_candidates = title_index.exact_candidates(normalized_reference_title)
+    if exact_candidates:
+        non_self_candidates = [
+            entry
+            for entry in exact_candidates
+            if entry.paper.paper_id != source_paper.paper_id
+        ]
+        if not non_self_candidates:
+            return "self"
+        if len(exact_candidates) > 1:
+            return "ambiguous"
+        target = non_self_candidates[0].paper
+        return InternalCitationMatch(
+            target_paper_id=target.paper_id,
+            target_title=target.title,
+            target_doi=_paper_normalized_doi(target),
+            method="title",
+            confidence=1.0,
+        )
+
     scored = []
-    for normalized_title, target in title_entries:
-        score = _title_similarity(normalized_reference_title, normalized_title)
-        scored.append((score, target))
+    for entry in title_index.fuzzy_candidates(normalized_reference_title):
+        score = _title_similarity(
+            normalized_reference_title,
+            entry.normalized_title,
+        )
+        scored.append((score, entry.paper))
     scored.sort(key=lambda item: item[0], reverse=True)
     if not scored or scored[0][0] < title_threshold:
         return None
@@ -386,15 +596,6 @@ def _doi_index(papers: list[Paper]) -> dict[str, Paper]:
         if doi and doi not in index:
             index[doi] = paper
     return index
-
-
-def _title_entries(papers: list[Paper]) -> list[tuple[str, Paper]]:
-    entries = []
-    for paper in papers:
-        normalized = _normalize_title(paper.title)
-        if len(normalized) >= MIN_TITLE_MATCH_LENGTH:
-            entries.append((normalized, paper))
-    return entries
 
 
 def _reference_doi(reference: dict[str, Any]) -> str | None:
@@ -452,12 +653,7 @@ def _doi_from_text(value: Any) -> str | None:
 
 
 def _normalize_doi(value: str) -> str:
-    normalized = value.strip().lower()
-    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
-        if normalized.startswith(prefix):
-            normalized = normalized.removeprefix(prefix)
-            break
-    return normalized.rstrip(".,);]")
+    return normalize_doi(value).lower().rstrip("]")
 
 
 def _title_similarity(normalized_left: str, normalized_right: str) -> float:
@@ -470,3 +666,33 @@ def _normalize_title(title: str) -> str:
     normalized = title.lower()
     normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
     return " ".join(normalized.split())
+
+
+def _significant_title_tokens(normalized_title: str) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in normalized_title.split():
+        if len(token) < MIN_TITLE_TOKEN_LENGTH:
+            continue
+        if token in TITLE_STOPWORDS:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _title_phrase_blocks(tokens: tuple[str, ...]) -> list[str]:
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for size in TITLE_PHRASE_BLOCK_SIZES:
+        if len(tokens) < size:
+            continue
+        for index in range(len(tokens) - size + 1):
+            block = " ".join(tokens[index : index + size])
+            if block in seen:
+                continue
+            seen.add(block)
+            blocks.append(block)
+    return blocks

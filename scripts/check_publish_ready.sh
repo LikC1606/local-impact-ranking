@@ -50,6 +50,20 @@ grep -q "docs/effective-citation-calculation.md" README.md
 grep -q "run_user_impact.sh" README.md
 grep -q "user_impact_status.json" README.md
 grep -q "user_impact_summary.md" README.md
+grep -q "AUTO_ENRICH=1" README.md
+grep -q "AUTO_ENRICH_SOURCES=openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire" README.md
+grep -q "auto_enrich_status.json" README.md
+grep -q "scoring_input" README.md
+grep -q "enrich-icite" README.md
+grep -q "enrich-europepmc" README.md
+grep -q "enrich-crossref" README.md
+grep -q "enrich-crossref-data-citations" README.md
+grep -q "enrich-ncbi-citations" README.md
+grep -q "enrich-datacite" README.md
+grep -q "enrich-datacite-events" README.md
+grep -q "enrich-openaire" README.md
+grep -q "enrich-wikidata" README.md
+grep -q "enrich-plos-metrics" README.md
 grep -q "offline replayed pairwise judgments" README.md
 grep -q "run_deliverable_check.sh" README.md
 grep -q "configs/calibration/sciimpact-qwen32b-heldout-p50.json" README.md
@@ -87,6 +101,8 @@ grep -q "rank-percentile" README.md
 grep -q "impact_score_cards.md" README.md
 grep -q "impact_claim_certificate.md" README.md
 grep -q "Impact Dimension Coverage" README.md
+grep -q "metadata.reference_deduplication" README.md
+grep -q "Reference Deduplication" docs/input-schema.md
 grep -q "self_citation_risk" docs/scoring-method.md
 grep -q "citation_outlier_flag" docs/scoring-method.md
 grep -q "influential_citation_score" docs/scoring-method.md
@@ -107,11 +123,36 @@ grep -q "rank-percentile" docs/scoring-method.md
 grep -q "effective-citation-calculation.md" docs/scoring-method.md
 grep -q "citation-data-sources.md" docs/scoring-method.md
 grep -q "enrich-semantic-scholar" docs/input-schema.md
+grep -q "enrich-europepmc" docs/input-schema.md
+grep -q "enrich-ncbi-citations" docs/input-schema.md
+grep -q "enrich-crossref" docs/input-schema.md
+grep -q "enrich-crossref-data-citations" docs/input-schema.md
+grep -q "enrich-datacite" docs/input-schema.md
+grep -q "enrich-datacite-events" docs/input-schema.md
+grep -q "enrich-openaire" docs/input-schema.md
+grep -q "enrich-wikidata" docs/input-schema.md
+grep -q "enrich-plos-metrics" docs/input-schema.md
 grep -q "semantic_scholar_influential_citation_count" docs/input-schema.md
+grep -q "crossref_data_citation_count" docs/input-schema.md
+grep -q "datacite_citation_count" docs/input-schema.md
+grep -q "datacite_events_cited_by_count" docs/input-schema.md
+grep -q "openaire_citation_count" docs/input-schema.md
+grep -q "wikidata_cited_by_count" docs/input-schema.md
+grep -q "article_usage_count" docs/input-schema.md
 grep -q "OpenAlex" docs/citation-data-sources.md
 grep -q "Semantic Scholar" docs/citation-data-sources.md
 grep -q "OpenCitations" docs/citation-data-sources.md
 grep -q "PubMed/iCite" docs/citation-data-sources.md
+grep -q "enrich-icite" docs/citation-data-sources.md
+grep -q "enrich-europepmc" docs/citation-data-sources.md
+grep -q "enrich-ncbi-citations" docs/citation-data-sources.md
+grep -q "enrich-crossref" docs/citation-data-sources.md
+grep -q "enrich-crossref-data-citations" docs/citation-data-sources.md
+grep -q "enrich-datacite" docs/citation-data-sources.md
+grep -q "enrich-datacite-events" docs/citation-data-sources.md
+grep -q "enrich-openaire" docs/citation-data-sources.md
+grep -q "enrich-wikidata" docs/citation-data-sources.md
+grep -q "enrich-plos-metrics" docs/citation-data-sources.md
 grep -q "do not silently average incompatible counts" docs/citation-data-sources.md
 grep -q "effective_citation_raw" docs/effective-citation-calculation.md
 grep -q "edge_effective_weight" docs/effective-citation-calculation.md

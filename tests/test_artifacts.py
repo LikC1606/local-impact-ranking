@@ -70,6 +70,9 @@ def test_run_artifacts_include_benchmark_summary_reports():
     assert "reports/external_evidence_readiness.json" in RUN_ARTIFACTS
     assert "reports/external_evidence_readiness.md" in RUN_ARTIFACTS
     assert "reports/external_evidence_paper_coverage.csv" in RUN_ARTIFACTS
+    assert "reports/citation_completeness_audit.json" in RUN_ARTIFACTS
+    assert "reports/citation_completeness_audit.md" in RUN_ARTIFACTS
+    assert "reports/citation_completeness_papers.csv" in RUN_ARTIFACTS
     assert "reports/impact_validity_evaluation.json" in RUN_ARTIFACTS
     assert "reports/impact_validity_evaluation.md" in RUN_ARTIFACTS
     assert "reports/impact_credibility_scorecard.json" in RUN_ARTIFACTS

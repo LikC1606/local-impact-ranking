@@ -8,6 +8,7 @@ import typer
 
 from local_impact_ranking.audit import (
     append_judge_result,
+    attach_judge_selections_to_papers,
     completed_paper_ids,
     judge_result_to_record,
     load_judge_results,
@@ -44,9 +45,25 @@ from local_impact_ranking.citation_cutoff import (
     write_citation_cutoff,
     write_citation_cutoff_audit,
 )
+from local_impact_ranking.citation_completeness_audit import (
+    citation_completeness_audit_report,
+    render_citation_completeness_audit_markdown,
+    write_citation_completeness_audit,
+)
 from local_impact_ranking.contexts import context_coverage_report
 from local_impact_ranking.credibility_report import write_credibility_report
+from local_impact_ranking.current_impact_credibility import (
+    write_current_impact_credibility,
+)
+from local_impact_ranking.crossref_data_citations_enrichment import (
+    enrich_papers_with_crossref_data_citations,
+)
+from local_impact_ranking.crossref_enrichment import enrich_papers_with_crossref
 from local_impact_ranking.data_readiness import data_readiness_report
+from local_impact_ranking.datacite_enrichment import enrich_papers_with_datacite
+from local_impact_ranking.datacite_events_enrichment import (
+    enrich_papers_with_datacite_events,
+)
 from local_impact_ranking.doctor import doctor_report, render_doctor_markdown
 from local_impact_ranking.evaluate import evaluate_judge_results, render_evaluation_markdown
 from local_impact_ranking.error_analysis import (
@@ -60,7 +77,12 @@ from local_impact_ranking.external_evidence_readiness import (
     render_external_evidence_readiness_markdown,
     write_external_evidence_paper_coverage_csv,
 )
-from local_impact_ranking.external_evidence_import import merge_external_impact_evidence
+from local_impact_ranking.external_evidence_import import (
+    merge_external_impact_evidence,
+    write_external_evidence_template,
+)
+from local_impact_ranking.external_identity_recovery import recover_external_identities
+from local_impact_ranking.europepmc_enrichment import enrich_papers_with_europepmc
 from local_impact_ranking.explanations import (
     entity_influence_explanations,
     export_paper_evidence_csv,
@@ -74,6 +96,11 @@ from local_impact_ranking.export import (
 )
 from local_impact_ranking.finetune_export import export_finetuning_datasets
 from local_impact_ranking.future_impact_labels import write_future_impact_labels
+from local_impact_ranking.icite_benchmark import (
+    build_icite_current_metrics,
+    enrich_papers_with_icite,
+    evaluate_icite_current_benchmark,
+)
 from local_impact_ranking.dpo_lora_train import (
     load_preference_examples_with_report,
     run_dpo_lora_training,
@@ -121,15 +148,24 @@ from local_impact_ranking.model_impact_index import (
     model_score_dataset,
     write_model_score_preflight,
 )
+from local_impact_ranking.ncbi_citation_enrichment import (
+    enrich_papers_with_ncbi_citations,
+)
 from local_impact_ranking.normalize import normalize_paper
 from local_impact_ranking.openalex_enrichment import enrich_papers_with_openalex
 from local_impact_ranking.opencitations_enrichment import (
     enrich_papers_with_opencitations,
 )
+from local_impact_ranking.openaire_enrichment import enrich_papers_with_openaire
+from local_impact_ranking.opcitance_benchmark import (
+    build_opcitance_icite_current_benchmark,
+)
 from local_impact_ranking.semantic_scholar_enrichment import (
     enrich_papers_with_semantic_scholar,
 )
+from local_impact_ranking.wikidata_enrichment import enrich_papers_with_wikidata
 from local_impact_ranking.pairwise_evaluation import write_pairwise_evaluation
+from local_impact_ranking.plos_metrics_enrichment import enrich_papers_with_plos_metrics
 from local_impact_ranking.proxy_evaluation import evaluate_proxy_quality
 from local_impact_ranking.project_readiness import (
     render_project_readiness_markdown,
@@ -624,6 +660,394 @@ def evaluate_impact_validity_cmd(
     )
 
 
+@app.command("evaluate-current-impact-credibility")
+def evaluate_current_impact_credibility_cmd(
+    scores: Path = typer.Option(..., "--scores", exists=True, readable=True),
+    labels: Path = typer.Option(..., "--labels", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output"),
+    score_columns: str = typer.Option(
+        "final_impact_score,score_95_true_05_effective,score_90_true_10_effective,score_80_true_20_effective,score_70_true_30_effective,score_50_true_50_effective,score_30_true_70_effective",
+        "--score-columns",
+        help="Comma-separated score columns to evaluate.",
+    ),
+    label_columns: str = typer.Option(
+        "rcr,citations_per_year,apt,nih_percentile,icite_citation_count",
+        "--label-columns",
+        help="Comma-separated current external metric columns.",
+    ),
+    primary_label_column: str | None = typer.Option(
+        None,
+        "--primary-label-column",
+        help="Primary current external metric used as the credibility gate. Defaults to the first available label column.",
+    ),
+    top_fraction: float = typer.Option(0.1, "--top-fraction"),
+    bootstrap_samples: int = typer.Option(100, "--bootstrap-samples"),
+    permutation_samples: int = typer.Option(100, "--permutation-samples"),
+    random_seed: int = typer.Option(0, "--random-seed"),
+) -> None:
+    report = write_current_impact_credibility(
+        scores,
+        labels,
+        output,
+        score_columns=_comma_list(score_columns),
+        label_columns=_comma_list(label_columns),
+        primary_label_column=primary_label_column,
+        top_fraction=top_fraction,
+        bootstrap_samples=bootstrap_samples,
+        permutation_samples=permutation_samples,
+        random_seed=random_seed,
+    )
+    summary = report["summary"]
+    typer.echo(
+        "Wrote current impact credibility report to "
+        f"{output} "
+        f"(credibility={summary['credibility_status']}, "
+        f"grade={summary['credibility_grade']})"
+    )
+
+
+@app.command("build-icite-current-benchmark")
+def build_icite_current_benchmark_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    batch_size: int = typer.Option(200, "--batch-size", min=1),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+) -> None:
+    summary = build_icite_current_metrics(
+        input,
+        output,
+        summary_output=summary_output,
+        batch_size=batch_size,
+        timeout=timeout,
+    )
+    typer.echo(
+        "Wrote NIH iCite current benchmark labels to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-icite")
+def enrich_icite_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    batch_size: int = typer.Option(200, "--batch-size", min=1),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_icite(
+        input,
+        output,
+        summary_output=summary_output,
+        batch_size=batch_size,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote NIH iCite-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-europepmc")
+def enrich_europepmc_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_europepmc(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote Europe PMC-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-crossref")
+def enrich_crossref_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_crossref(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote Crossref-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-crossref-data-citations")
+def enrich_crossref_data_citations_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_crossref_data_citations(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote Crossref Data Citations-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"positive={summary['positive_count']})"
+    )
+
+
+@app.command("enrich-datacite")
+def enrich_datacite_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_datacite(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote DataCite-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-datacite-events")
+def enrich_datacite_events_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_datacite_events(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote DataCite Events-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"positive={summary['positive_count']})"
+    )
+
+
+@app.command("enrich-openaire")
+def enrich_openaire_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_openaire(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote OpenAIRE-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"unmatched={summary['unmatched_count']})"
+    )
+
+
+@app.command("enrich-plos-metrics")
+def enrich_plos_metrics_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_plos_metrics(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote PLOS metrics-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"positive={summary['positive_count']})"
+    )
+
+
+@app.command("enrich-wikidata")
+def enrich_wikidata_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    user_agent: str = typer.Option("local-impact-ranking/0.1", "--user-agent"),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_wikidata(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        user_agent=user_agent,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote Wikidata-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"positive={summary['positive_count']})"
+    )
+
+
+@app.command("enrich-ncbi-citations")
+def enrich_ncbi_citations_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = enrich_papers_with_ncbi_citations(
+        input,
+        output,
+        summary_output=summary_output,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote NCBI citation-enriched papers to "
+        f"{output} (matched={summary['matched_count']}, "
+        f"skipped={summary['skipped_count']})"
+    )
+
+
+@app.command("recover-external-identities")
+def recover_external_identities_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    summary_output: Path | None = typer.Option(None, "--summary-output"),
+    min_title_similarity: float = typer.Option(0.92, "--min-title-similarity"),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
+) -> None:
+    summary = recover_external_identities(
+        input,
+        output,
+        summary_output=summary_output,
+        min_title_similarity=min_title_similarity,
+        timeout=timeout,
+        resume=resume,
+    )
+    typer.echo(
+        "Wrote identity-recovered papers to "
+        f"{output} (recovered={summary['recovered_count']}, "
+        f"unresolved={summary['unresolved_count']})"
+    )
+
+
+@app.command("evaluate-icite-current-benchmark")
+def evaluate_icite_current_benchmark_cmd(
+    papers: Path = typer.Option(..., "--papers", exists=True, readable=True),
+    scores: Path = typer.Option(..., "--scores", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    batch_size: int = typer.Option(200, "--batch-size", min=1),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    top_fraction: float = typer.Option(0.1, "--top-fraction"),
+    bootstrap_samples: int = typer.Option(100, "--bootstrap-samples"),
+    permutation_samples: int = typer.Option(100, "--permutation-samples"),
+    random_seed: int = typer.Option(0, "--random-seed"),
+) -> None:
+    report = evaluate_icite_current_benchmark(
+        papers,
+        scores,
+        output,
+        batch_size=batch_size,
+        timeout=timeout,
+        top_fraction=top_fraction,
+        bootstrap_samples=bootstrap_samples,
+        permutation_samples=permutation_samples,
+        random_seed=random_seed,
+    )
+    credibility = report["credibility"]["summary"]
+    typer.echo(
+        "Wrote NIH iCite current benchmark evaluation to "
+        f"{output} (matched={report['summary']['matched_count']}, "
+        f"credibility={credibility['credibility_status']}, "
+        f"grade={credibility['credibility_grade']})"
+    )
+
+
+@app.command("build-opcitance-icite-current-benchmark")
+def build_opcitance_icite_current_benchmark_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    max_papers: int = typer.Option(1000, "--max-papers", min=1),
+    max_rows: int | None = typer.Option(None, "--max-rows", min=1),
+    candidate_limit: int | None = typer.Option(None, "--candidate-limit", min=1),
+    batch_size: int = typer.Option(200, "--batch-size", min=1),
+    timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    top_fraction: float = typer.Option(0.1, "--top-fraction"),
+    bootstrap_samples: int = typer.Option(100, "--bootstrap-samples"),
+    permutation_samples: int = typer.Option(100, "--permutation-samples"),
+    random_seed: int = typer.Option(0, "--random-seed"),
+) -> None:
+    summary = build_opcitance_icite_current_benchmark(
+        input,
+        output,
+        max_papers=max_papers,
+        max_rows=max_rows,
+        candidate_limit=candidate_limit,
+        batch_size=batch_size,
+        timeout=timeout,
+        top_fraction=top_fraction,
+        bootstrap_samples=bootstrap_samples,
+        permutation_samples=permutation_samples,
+        random_seed=random_seed,
+    )
+    typer.echo(
+        "Wrote OpCitance + iCite current benchmark to "
+        f"{output} (papers={summary['paper_count']}, "
+        f"internal_edges={summary['internal_reference_edges']}, "
+        f"credibility={summary['credibility_status']}, "
+        f"grade={summary['credibility_grade']})"
+    )
+
+
+def _comma_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @app.command("derive-future-impact-labels")
 def derive_future_impact_labels_cmd(
     input_path: Path = typer.Option(
@@ -794,12 +1218,14 @@ def enrich_openalex_cmd(
     output: Path = typer.Option(..., "--output", "-o"),
     email: str | None = typer.Option(None, "--email"),
     timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
 ) -> None:
     summary = enrich_papers_with_openalex(
         input,
         output,
         email=email,
         timeout=timeout,
+        resume=resume,
     )
     typer.echo(
         "Wrote OpenAlex-enriched papers to "
@@ -818,10 +1244,16 @@ def enrich_opencitations_cmd(
         True,
         "--include-edges/--no-include-edges",
     ),
+    max_incoming_edges_per_paper: int = typer.Option(
+        500,
+        "--max-incoming-edges-per-paper",
+        min=0,
+    ),
     materialize_internal_edges: bool = typer.Option(
         False,
         "--materialize-internal-edges/--no-materialize-internal-edges",
     ),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
 ) -> None:
     summary = enrich_papers_with_opencitations(
         input,
@@ -829,7 +1261,9 @@ def enrich_opencitations_cmd(
         token=token,
         timeout=timeout,
         include_edges=include_edges,
+        max_incoming_edges_per_paper=max_incoming_edges_per_paper,
         materialize_internal_edges=materialize_internal_edges,
+        resume=resume,
     )
     typer.echo(
         "Wrote OpenCitations-enriched papers to "
@@ -846,12 +1280,16 @@ def enrich_semantic_scholar_cmd(
     output: Path = typer.Option(..., "--output", "-o"),
     api_key: str | None = typer.Option(None, "--api-key"),
     timeout: float = typer.Option(30.0, "--timeout", min=1.0),
+    batch_size: int = typer.Option(100, "--batch-size", min=1),
+    resume: bool = typer.Option(False, "--resume/--no-resume"),
 ) -> None:
     summary = enrich_papers_with_semantic_scholar(
         input,
         output,
         api_key=api_key,
         timeout=timeout,
+        batch_size=batch_size,
+        resume=resume,
     )
     typer.echo(
         "Wrote Semantic Scholar-enriched papers to "
@@ -921,6 +1359,23 @@ def external_evidence_readiness_cmd(
         typer.echo(json.dumps(report, indent=2))
 
 
+@app.command("citation-completeness-audit")
+def citation_completeness_audit_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path | None = typer.Option(None, "--output", "-o"),
+    markdown: bool = typer.Option(False, "--markdown/--json"),
+) -> None:
+    papers = load_papers_jsonl(input)
+    if output is not None:
+        report = write_citation_completeness_audit(papers, output)
+    else:
+        report = citation_completeness_audit_report(papers)
+    if markdown:
+        typer.echo(render_citation_completeness_audit_markdown(report))
+    else:
+        typer.echo(json.dumps(report, indent=2))
+
+
 @app.command("import-external-evidence")
 def import_external_evidence_cmd(
     input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
@@ -938,6 +1393,19 @@ def import_external_evidence_cmd(
     typer.echo(
         "Imported external evidence to "
         f"{output} (papers={summary['paper_count']}, matched={summary['matched_count']})"
+    )
+
+
+@app.command("external-evidence-template")
+def external_evidence_template_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+) -> None:
+    summary = write_external_evidence_template(input, output)
+    typer.echo(
+        "Wrote external evidence template to "
+        f"{output} (papers={summary['paper_count']}, "
+        f"missing_query_ids={summary['papers_without_query_id']})"
     )
 
 
@@ -1532,6 +2000,35 @@ def judge(
     typer.echo(f"Wrote {len(selected_papers)} judge records to {audit_output}")
 
 
+@app.command("attach-judge-selections")
+def attach_judge_selections(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    judge_audit: Path = typer.Option(
+        ...,
+        "--judge-audit",
+        exists=True,
+        readable=True,
+    ),
+    output: Path = typer.Option(..., "--output", "-o"),
+    metadata_key: str = typer.Option(
+        "impact_selected_references",
+        "--metadata-key",
+    ),
+) -> None:
+    manifest = attach_judge_selections_to_papers(
+        input,
+        judge_audit,
+        output,
+        metadata_key=metadata_key,
+    )
+    typer.echo(
+        "Attached judge selections to "
+        f"{manifest['matched_paper_count']}/{manifest['paper_count']} papers "
+        f"({manifest['valid_selected_reference_count']}/"
+        f"{manifest['selected_reference_count']} valid selections) -> {output}"
+    )
+
+
 @app.command()
 def run(
     input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
@@ -1765,6 +2262,7 @@ def run(
         external_paper_coverage_rows,
         reports_dir / "external_evidence_paper_coverage.csv",
     )
+    write_citation_completeness_audit(papers, reports_dir)
     (reports_dir / "baseline_comparison.json").write_text(
         json.dumps(baseline_report, indent=2) + "\n",
         encoding="utf-8",

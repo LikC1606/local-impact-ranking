@@ -30,6 +30,14 @@ Common environment variables:
   VALIDITY_LABELS=path/to/future_impact_labels.jsonl
   FUSION_WEIGHTS=path/to/fusion_calibration.json
   MODEL_CREDIBILITY_REPORT=configs/model_credibility/local-impact-judge-source-task-dpo.json
+  PAIRWISE_STABILITY_SAMPLES=0
+  FINAL_SCORE_STABILITY_SAMPLES=0
+  AUTO_ENRICH=0|1
+  AUTO_ENRICH_SOURCES=openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire
+  AUTO_ENRICH_TIMEOUT=30
+  OPENALEX_EMAIL=you@example.org
+  OPENCITATIONS_TOKEN=optional-token
+  SEMANTIC_SCHOLAR_API_KEY=optional-key
 
 Claim boundary:
   Scores are dataset-local paper influence unless external calibrated evidence
@@ -75,12 +83,20 @@ VALIDITY_LABELS="${VALIDITY_LABELS:-}"
 VALIDITY_LABEL_COLUMN="${VALIDITY_LABEL_COLUMN:-future_impact}"
 VALIDITY_BOOTSTRAP_SAMPLES="${VALIDITY_BOOTSTRAP_SAMPLES:-200}"
 VALIDITY_PERMUTATION_SAMPLES="${VALIDITY_PERMUTATION_SAMPLES:-200}"
-PAIRWISE_STABILITY_SAMPLES="${PAIRWISE_STABILITY_SAMPLES:-80}"
+PAIRWISE_STABILITY_SAMPLES="${PAIRWISE_STABILITY_SAMPLES:-0}"
 PAIRWISE_STABILITY_TOP_N="${PAIRWISE_STABILITY_TOP_N:-20}"
 PAIRWISE_STABILITY_SEED="${PAIRWISE_STABILITY_SEED:-17}"
-FINAL_SCORE_STABILITY_SAMPLES="${FINAL_SCORE_STABILITY_SAMPLES:-80}"
+FINAL_SCORE_STABILITY_SAMPLES="${FINAL_SCORE_STABILITY_SAMPLES:-0}"
 FINAL_SCORE_STABILITY_TOP_N="${FINAL_SCORE_STABILITY_TOP_N:-20}"
 FINAL_SCORE_STABILITY_SEED="${FINAL_SCORE_STABILITY_SEED:-23}"
+AUTO_ENRICH="${AUTO_ENRICH:-0}"
+AUTO_ENRICH_SOURCES="${AUTO_ENRICH_SOURCES:-openalex,europepmc,identity_recovery,europepmc,crossref,crossref_data_citations,icite,ncbi_citations,opencitations,semantic_scholar,datacite,datacite_events,openaire}"
+AUTO_ENRICH_TIMEOUT="${AUTO_ENRICH_TIMEOUT:-30}"
+AUTO_ENRICH_OUTPUT="${OUTPUT}/auto-enrich"
+OPENALEX_EMAIL="${OPENALEX_EMAIL:-}"
+OPENCITATIONS_TOKEN="${OPENCITATIONS_TOKEN:-}"
+SEMANTIC_SCHOLAR_API_KEY="${SEMANTIC_SCHOLAR_API_KEY:-}"
+SCORING_INPUT="${INPUT}"
 
 case "${RUN_PRESET}" in
   "custom" | "")
@@ -131,12 +147,236 @@ fi
 
 mkdir -p "${OUTPUT}"
 
+if [[ "${AUTO_ENRICH}" == "1" ]]; then
+  mkdir -p "${AUTO_ENRICH_OUTPUT}"
+  auto_enrich_current_input="${INPUT}"
+  auto_enrich_completed_sources=()
+  declare -A auto_enrich_source_counts=()
+  IFS=',' read -r -a auto_enrich_sources <<< "${AUTO_ENRICH_SOURCES}"
+  for raw_source in "${auto_enrich_sources[@]}"; do
+    source="$(printf '%s' "${raw_source}" | tr -d '[:space:]')"
+    if [[ -z "${source}" ]]; then
+      continue
+    fi
+    source_count="${auto_enrich_source_counts[${source}]:-0}"
+    source_count=$((source_count + 1))
+    auto_enrich_source_counts["${source}"]="${source_count}"
+    case "${source}" in
+      "openalex")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.openalex.jsonl"
+        openalex_args=(
+          --input "${auto_enrich_current_input}"
+          --output "${next_input}"
+          --timeout "${AUTO_ENRICH_TIMEOUT}"
+          --resume
+        )
+        if [[ -n "${OPENALEX_EMAIL}" ]]; then
+          openalex_args+=(--email "${OPENALEX_EMAIL}")
+        fi
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-openalex "${openalex_args[@]}"
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "icite")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.icite.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-icite \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/icite_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "europepmc")
+        if [[ "${source_count}" == "1" ]]; then
+          next_input="${AUTO_ENRICH_OUTPUT}/papers.europepmc.jsonl"
+          europepmc_summary_output="${AUTO_ENRICH_OUTPUT}/europepmc_summary.json"
+        else
+          next_input="${AUTO_ENRICH_OUTPUT}/papers.europepmc.${source_count}.jsonl"
+          europepmc_summary_output="${AUTO_ENRICH_OUTPUT}/europepmc_${source_count}_summary.json"
+        fi
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-europepmc \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${europepmc_summary_output}" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "identity_recovery")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.identity_recovered.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli recover-external-identities \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/identity_recovery_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "crossref")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.crossref.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-crossref \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/crossref_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "crossref_data_citations")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.crossref_data_citations.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-crossref-data-citations \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/crossref_data_citations_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "ncbi_citations")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.ncbi_citations.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-ncbi-citations \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/ncbi_citations_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "opencitations")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.opencitations.jsonl"
+        opencitations_args=(
+          --input "${auto_enrich_current_input}"
+          --output "${next_input}"
+          --timeout "${AUTO_ENRICH_TIMEOUT}"
+          --include-edges
+          --materialize-internal-edges
+          --resume
+        )
+        if [[ -n "${OPENCITATIONS_TOKEN}" ]]; then
+          opencitations_args+=(--token "${OPENCITATIONS_TOKEN}")
+        fi
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-opencitations "${opencitations_args[@]}"
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "semantic_scholar")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.semantic_scholar.jsonl"
+        semantic_scholar_args=(
+          --input "${auto_enrich_current_input}"
+          --output "${next_input}"
+          --timeout "${AUTO_ENRICH_TIMEOUT}"
+          --resume
+        )
+        if [[ -n "${SEMANTIC_SCHOLAR_API_KEY}" ]]; then
+          semantic_scholar_args+=(--api-key "${SEMANTIC_SCHOLAR_API_KEY}")
+        fi
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-semantic-scholar "${semantic_scholar_args[@]}"
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "datacite")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.datacite.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-datacite \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/datacite_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "datacite_events")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.datacite_events.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-datacite-events \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/datacite_events_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "openaire")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.openaire.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-openaire \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/openaire_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      "plos_metrics")
+        next_input="${AUTO_ENRICH_OUTPUT}/papers.plos_metrics.jsonl"
+        PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli enrich-plos-metrics \
+          --input "${auto_enrich_current_input}" \
+          --output "${next_input}" \
+          --summary-output "${AUTO_ENRICH_OUTPUT}/plos_metrics_summary.json" \
+          --timeout "${AUTO_ENRICH_TIMEOUT}" \
+          --resume
+        auto_enrich_current_input="${next_input}"
+        auto_enrich_completed_sources+=("${source}")
+        ;;
+      *)
+        echo "Unknown AUTO_ENRICH source: ${source}. Expected openalex, europepmc, identity_recovery, crossref, crossref_data_citations, icite, ncbi_citations, opencitations, semantic_scholar, datacite, datacite_events, openaire, plos_metrics." >&2
+        exit 2
+        ;;
+    esac
+  done
+  SCORING_INPUT="${auto_enrich_current_input}"
+  PYTHONNOUSERSITE=1 "${PYTHON_BIN}" - <<'PY' "${AUTO_ENRICH_OUTPUT}" "${INPUT}" "${SCORING_INPUT}" "${AUTO_ENRICH_SOURCES}" "${auto_enrich_completed_sources[*]}"
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+completed = [source for source in sys.argv[5].split() if source]
+status = {
+    "enabled": True,
+    "input": sys.argv[2],
+    "scoring_input": sys.argv[3],
+    "requested_sources": [
+        source.strip() for source in sys.argv[4].split(",") if source.strip()
+    ],
+    "completed_sources": completed,
+    "status": "passed",
+}
+(root / "auto_enrich_status.json").write_text(
+    json.dumps(status, indent=2) + "\n",
+    encoding="utf-8",
+)
+lines = [
+    "# Auto Enrichment",
+    "",
+    "| Item | Value |",
+    "| --- | --- |",
+    f"| enabled | {status['enabled']} |",
+    f"| input | `{status['input']}` |",
+    f"| scoring_input | `{status['scoring_input']}` |",
+    f"| requested_sources | {', '.join(status['requested_sources'])} |",
+    f"| completed_sources | {', '.join(status['completed_sources'])} |",
+]
+(root / "auto_enrich_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+elif [[ "${AUTO_ENRICH}" != "0" ]]; then
+  echo "AUTO_ENRICH must be 0 or 1, got: ${AUTO_ENRICH}" >&2
+  exit 2
+fi
+
 PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" -m local_impact_ranking.cli validate \
-  --input "${INPUT}" \
+  --input "${SCORING_INPUT}" \
   --output "${OUTPUT}/validation"
 
 preflight_args=(
-  --input "${INPUT}"
+  --input "${SCORING_INPUT}"
   --output "${OUTPUT}/preflight"
   --pair-budget "${PAIR_BUDGET}"
   --target-paper-coverage "${TARGET_PAPER_COVERAGE}"
@@ -176,7 +416,7 @@ if [[ -z "${PAIRWISE_JUDGMENTS}" || "${DIRECT_SCORE}" == "1" ]]; then
 fi
 
 score_args=(
-  --input "${INPUT}"
+  --input "${SCORING_INPUT}"
   --output "${OUTPUT}/model-impact"
   --base-url "${BASE_URL}"
   --model "${MODEL}"
@@ -252,6 +492,8 @@ test -s "${OUTPUT}/model-impact/impact_scores.jsonl"
 test -s "${OUTPUT}/model-impact/model_impact_report.md"
 test -s "${OUTPUT}/model-impact/external_evidence_readiness.md"
 test -s "${OUTPUT}/model-impact/external_evidence_paper_coverage.csv"
+test -s "${OUTPUT}/model-impact/citation_completeness_audit.md"
+test -s "${OUTPUT}/model-impact/citation_completeness_papers.csv"
 test -s "${OUTPUT}/model-impact/pairwise_stability.md"
 test -s "${OUTPUT}/model-impact/pairwise_stability.csv"
 test -s "${OUTPUT}/model-impact/pairwise_stability.json"
@@ -267,7 +509,7 @@ grep -q "final_impact_score" "${OUTPUT}/model-impact/impact_scores.csv"
 grep -q "Impact Claim Certificate" "${OUTPUT}/model-impact/impact_claim_certificate.md"
 grep -q "Model Score Dataset" "${OUTPUT}/model-impact/report_bundle/README.md"
 
-PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" - <<'PY' "${OUTPUT}" "${INPUT}" "${BASE_URL}" "${MODEL}" "${RUN_PRESET}" "${MODEL_CREDIBILITY_REPORT}" "${CALIBRATION_REPORT}"
+PYTHONNOUSERSITE=1 PYTHONPATH=src "${PYTHON_BIN}" - <<'PY' "${OUTPUT}" "${INPUT}" "${BASE_URL}" "${MODEL}" "${RUN_PRESET}" "${MODEL_CREDIBILITY_REPORT}" "${CALIBRATION_REPORT}" "${AUTO_ENRICH}" "${AUTO_ENRICH_SOURCES}" "${SCORING_INPUT}" "${AUTO_ENRICH_OUTPUT}"
 import csv
 import json
 import sys
@@ -294,6 +536,9 @@ validation = json.loads((root / "validation" / "validation.json").read_text(enco
 external_readiness = json.loads(
     (impact_dir / "external_evidence_readiness.json").read_text(encoding="utf-8")
 )
+citation_completeness_audit = json.loads(
+    (impact_dir / "citation_completeness_audit.json").read_text(encoding="utf-8")
+)
 summary = report.get("summary", {})
 pairwise_stability = summary.get("pairwise_stability", {})
 final_score_stability = summary.get("final_score_stability", {})
@@ -319,9 +564,14 @@ top_missing_evidence = (
     external_readiness.get("paper_coverage_summary", {}).get("top_missing_evidence", [])
 )
 internal_graph = external_readiness.get("graph_evidence", {})
+citation_completeness_summary = citation_completeness_audit.get("summary", {})
 recommended_next_actions = certificate.get("recommended_next_actions", [])
 model_credibility_path = Path(sys.argv[6]) if sys.argv[6] else None
 calibration_report_path = Path(sys.argv[7]) if sys.argv[7] else None
+auto_enrich_enabled = sys.argv[8] == "1"
+auto_enrich_sources = [source for source in sys.argv[9].split(",") if source]
+scoring_input = sys.argv[10]
+auto_enrich_output = sys.argv[11] if auto_enrich_enabled else None
 model_credibility_card = write_model_credibility_card(
     model_credibility_path,
     impact_dir,
@@ -466,6 +716,14 @@ calibration_decision = calibration_profile_card.get("decision", {})
 status = {
     "status": "passed",
     "input": sys.argv[2],
+    "scoring_input": scoring_input,
+    "auto_enrich_enabled": auto_enrich_enabled,
+    "auto_enrich_sources": auto_enrich_sources,
+    "auto_enrich_input": sys.argv[2],
+    "auto_enrich_output": auto_enrich_output,
+    "auto_enrich_status": str(Path(auto_enrich_output) / "auto_enrich_status.json")
+    if auto_enrich_output
+    else None,
     "output": str(root),
     "base_url": sys.argv[3],
     "model": sys.argv[4],
@@ -475,6 +733,9 @@ status = {
     "claim_certificate": str(impact_dir / "impact_claim_certificate.md"),
     "summary_report": str(root / "user_impact_summary.md"),
     "report_bundle": str(impact_dir / "report_bundle"),
+    "citation_completeness_audit": str(
+        impact_dir / "citation_completeness_audit.md"
+    ),
     "model_credibility_card": str(impact_dir / "model_credibility_card.md"),
     "calibration_profile_card": str(impact_dir / "calibration_profile_card.md"),
     "model_credibility_report": str(model_credibility_path)
@@ -583,6 +844,33 @@ status = {
     "exploratory_paper_count": reportability_counts.get("exploratory", 0),
     "low_confidence_paper_count": reportability_counts.get("low_confidence", 0),
     "excluded_non_article_count": reportability_counts.get("excluded_non_article", 0),
+    "citation_evidence_coverage": citation_completeness_summary.get(
+        "citation_evidence_coverage"
+    ),
+    "multi_source_coverage": citation_completeness_summary.get(
+        "multi_source_coverage"
+    ),
+    "mean_completeness_score": citation_completeness_summary.get(
+        "mean_completeness_score"
+    ),
+    "positive_citation_evidence_coverage": citation_completeness_summary.get(
+        "positive_citation_evidence_coverage"
+    ),
+    "papers_without_query_ids": citation_completeness_summary.get(
+        "papers_without_query_ids"
+    ),
+    "papers_without_numeric_citation_evidence": citation_completeness_summary.get(
+        "papers_without_numeric_citation_evidence"
+    ),
+    "papers_with_single_source_only": citation_completeness_summary.get(
+        "papers_with_single_source_only"
+    ),
+    "papers_with_source_conflict": citation_completeness_summary.get(
+        "papers_with_source_conflict"
+    ),
+    "papers_with_confirmed_multi_source_zero": citation_completeness_summary.get(
+        "papers_with_confirmed_multi_source_zero"
+    ),
     "evidence_signal_audit": evidence_signal_audit,
     "claim_boundary": "dataset-local paper influence; not global scientific impact without external calibrated evidence",
 }
@@ -602,6 +890,10 @@ lines = [
     "| --- | --- |",
     f"| status | {cell(status.get('status'))} |",
     f"| input | `{cell(status.get('input'))}` |",
+    f"| scoring_input | `{cell(status.get('scoring_input'))}` |",
+    f"| auto_enrich_enabled | {cell(status.get('auto_enrich_enabled'))} |",
+    f"| auto_enrich_sources | {cell(', '.join(status.get('auto_enrich_sources') or []))} |",
+    f"| auto_enrich_output | `{cell(status.get('auto_enrich_output'))}` |",
     f"| model | {cell(status.get('model'))} |",
     f"| run_preset | {cell(status.get('run_preset'))} |",
     f"| paper_count | {cell(status.get('paper_count'))} |",
@@ -635,6 +927,17 @@ lines = [
     f"| exploratory_paper_count | {cell(status.get('exploratory_paper_count'))} |",
     f"| low_confidence_paper_count | {cell(status.get('low_confidence_paper_count'))} |",
     f"| excluded_non_article_count | {cell(status.get('excluded_non_article_count'))} |",
+    "",
+    "## Auto Enrichment",
+    "",
+    "| Item | Value |",
+    "| --- | --- |",
+    f"| enabled | {cell(status.get('auto_enrich_enabled'))} |",
+    f"| input | `{cell(status.get('auto_enrich_input'))}` |",
+    f"| scoring_input | `{cell(status.get('scoring_input'))}` |",
+    f"| sources | {cell(', '.join(status.get('auto_enrich_sources') or []))} |",
+    f"| output | `{cell(status.get('auto_enrich_output'))}` |",
+    f"| status_file | `{cell(status.get('auto_enrich_status'))}` |",
     "",
     "## Model Credibility",
     "",
@@ -815,6 +1118,23 @@ if evidence_signal_audit.get("interpretation"):
 lines.extend(
     [
         "",
+        "## Citation Completeness Audit",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| citation_evidence_coverage | {cell(status.get('citation_evidence_coverage'))} |",
+        f"| multi_source_coverage | {cell(status.get('multi_source_coverage'))} |",
+        f"| mean_completeness_score | {cell(status.get('mean_completeness_score'))} |",
+        f"| positive_citation_evidence_coverage | {cell(status.get('positive_citation_evidence_coverage'))} |",
+        f"| papers_without_query_ids | {cell(status.get('papers_without_query_ids'))} |",
+        f"| papers_without_numeric_citation_evidence | {cell(status.get('papers_without_numeric_citation_evidence'))} |",
+        f"| papers_with_single_source_only | {cell(status.get('papers_with_single_source_only'))} |",
+        f"| papers_with_source_conflict | {cell(status.get('papers_with_source_conflict'))} |",
+        f"| papers_with_confirmed_multi_source_zero | {cell(status.get('papers_with_confirmed_multi_source_zero'))} |",
+        "",
+        "The audit does not claim all citations are found; it separates supported zeros from missing-source and single-source cases.",
+        "",
+        "",
         "## Evidence Gaps",
         "",
         "| Missing Evidence | Paper Count | Paper Coverage |",
@@ -856,6 +1176,7 @@ lines.extend(
         f"- Scores: `{impact_dir / 'impact_scores.csv'}`",
         f"- Model impact report: `{impact_dir / 'model_impact_report.md'}`",
         f"- Claim certificate: `{impact_dir / 'impact_claim_certificate.md'}`",
+        f"- Citation completeness audit: `{impact_dir / 'citation_completeness_audit.md'}`",
         f"- Model credibility card: `{impact_dir / 'model_credibility_card.md'}`",
         f"- Calibration profile card: `{impact_dir / 'calibration_profile_card.md'}`",
         f"- Score cards: `{impact_dir / 'impact_score_cards.md'}`",

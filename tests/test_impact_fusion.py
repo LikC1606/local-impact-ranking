@@ -89,7 +89,8 @@ def test_compute_impact_index_v2_fuses_model_citation_graph_context_and_momentum
     result = compute_impact_index_v2(papers, pairwise_rankings)
     by_id = {row["paper_id"]: row for row in result["rankings"]}
 
-    assert result["summary"]["version"] == "impact_index_v3_evidence_first"
+    assert result["summary"]["version"] == "true_effective_citation_impact_v1"
+    assert result["summary"]["legacy_fusion_version"] == "impact_index_v3_evidence_first"
     assert result["summary"]["signal_availability"]["model_pairwise"]["available_paper_count"] == 3
     assert result["summary"]["signal_availability"]["citation_context_quality"]["available_paper_count"] == 3
     assert by_id["p2"]["impact_index_v2"] > by_id["p3"]["impact_index_v2"]
@@ -108,6 +109,423 @@ def test_compute_impact_index_v2_fuses_model_citation_graph_context_and_momentum
     assert by_id["p2"]["uncertainty_band"] in {"low", "medium"}
     assert by_id["p2"]["reportability_status"] in {"reportable", "exploratory"}
     assert result["summary"]["reportability"]["paper_count"] == 3
+
+
+def test_final_impact_score_uses_only_true_and_effective_citations():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "high_true",
+                "title": "Highly cited paper",
+                "citation_count": 1000,
+                "metadata": {
+                    "external_impact": {
+                        "patent_citations": 0,
+                        "policy_citations": 0,
+                        "software_mentions": 0,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "effective",
+                "title": "Method reused paper",
+                "citation_count": 10,
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "model_liked",
+                "title": "Model liked but uncited paper",
+                "citation_count": 0,
+                "metadata": {
+                    "external_impact": {
+                        "field_year_percentile": 0.99,
+                        "patent_citations": 20,
+                        "policy_citations": 20,
+                        "software_mentions": 100,
+                    }
+                },
+                "references": [
+                    {
+                        "reference_id": "effective",
+                        "title": "Method reused paper",
+                    }
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "effective",
+                        "sentence": "We used this method as the assay protocol.",
+                        "section": "Methods",
+                    }
+                ],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": 1,
+            "paper_id": "model_liked",
+            "title": "Model liked but uncited paper",
+            "impact_index": 100.0,
+            "comparisons": 2,
+            "confidence": 0.9,
+        },
+        {
+            "rank": 2,
+            "paper_id": "high_true",
+            "title": "Highly cited paper",
+            "impact_index": 20.0,
+            "comparisons": 2,
+            "confidence": 0.9,
+        },
+        {
+            "rank": 3,
+            "paper_id": "effective",
+            "title": "Method reused paper",
+            "impact_index": 10.0,
+            "comparisons": 2,
+            "confidence": 0.9,
+        },
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    by_id = {row["paper_id"]: row for row in result["rankings"]}
+
+    assert result["summary"]["version"] == "true_effective_citation_impact_v1"
+    assert result["summary"]["final_score_formula"] == {
+        "true_citation_score": 0.95,
+        "effective_citation_score": 0.05,
+    }
+    assert "weighted combination" in result["summary"]["true_effective_citation"][
+        "interpretation"
+    ]
+    assert "average" not in result["summary"]["true_effective_citation"][
+        "interpretation"
+    ]
+    assert by_id["high_true"]["true_citation_score"] == 100.0
+    assert by_id["effective"]["effective_citation_score"] == 100.0
+    assert by_id["high_true"]["final_impact_score"] == 95.0
+    assert by_id["effective"]["final_impact_score"] == 52.5
+    assert by_id["high_true"]["score_95_true_05_effective"] == 95.0
+    assert by_id["effective"]["score_90_true_10_effective"] == 55.0
+    assert by_id["effective"]["score_50_true_50_effective"] == 75.0
+    assert by_id["high_true"]["score_50_true_50_effective"] == 50.0
+    assert by_id["model_liked"]["final_impact_score"] == 0.0
+    assert result["rankings"][0]["paper_id"] == "high_true"
+
+
+def test_true_citation_fields_resolve_multi_source_counts_and_conflicts():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "openalex",
+                "title": "Semantic Scholar exceeds OpenAlex",
+                "citation_count": 90,
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 50,
+                        "semantic_scholar_citation_count": 90,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "opencitations_rescue",
+                "title": "OpenAlex missed citations",
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 0,
+                        "semantic_scholar_citation_count": 0,
+                        "pubmed_citation_count": 0,
+                        "opencitations_cited_by_count": 24,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "all_zero",
+                "title": "Known zero citations",
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 0,
+                        "semantic_scholar_citation_count": 0,
+                        "icite_citation_count": 0,
+                        "crossref_is_referenced_by_count": 0,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "europepmc_ncbi",
+                "title": "OpenAlex missed biomedical citations",
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 0,
+                        "europepmc_cited_by_count": 12,
+                        "ncbi_pubmed_citedin_count": 15,
+                        "ncbi_pmc_cited_by_count": 8,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "datacite_openaire",
+                "title": "Repository impact",
+                "metadata": {
+                    "external_impact": {
+                        "datacite_citation_count": 3,
+                        "openaire_citation_count": 11,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "datacite_events",
+                "title": "DataCite Events impact",
+                "metadata": {
+                    "external_impact": {
+                        "datacite_events_cited_by_count": 12,
+                        "wikidata_cited_by_count": 8,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "crossref_data",
+                "title": "Crossref Data Citation impact",
+                "metadata": {
+                    "external_impact": {
+                        "crossref_data_citation_count": 13,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "wikidata_only",
+                "title": "Wikidata impact",
+                "metadata": {
+                    "external_impact": {
+                        "wikidata_cited_by_count": 9,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "supplied",
+                "title": "Supplied generic count",
+                "citation_count": 10,
+                "references": [],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    by_id = {row["paper_id"]: row for row in result["rankings"]}
+
+    assert by_id["openalex"]["true_citation_raw"] == 90.0
+    assert by_id["openalex"]["true_citation_source"] == "semantic_scholar"
+    assert by_id["openalex"]["true_citation_openalex_raw"] == 50.0
+    assert by_id["openalex"]["true_citation_semantic_scholar_raw"] == 90.0
+    assert by_id["openalex"]["true_citation_max_raw"] == 90.0
+    assert by_id["openalex"]["true_citation_source_count"] == 2
+    assert by_id["openalex"]["true_citation_positive_source_count"] == 2
+    assert by_id["openalex"]["true_citation_source_conflict_flag"] is False
+    assert by_id["openalex"]["true_citation_source_agreement"] == "compatible"
+    assert by_id["opencitations_rescue"]["true_citation_raw"] == 24.0
+    assert by_id["opencitations_rescue"]["true_citation_source"] == "opencitations"
+    assert by_id["opencitations_rescue"]["true_citation_openalex_raw"] == 0.0
+    assert by_id["opencitations_rescue"]["true_citation_opencitations_raw"] == 24.0
+    assert by_id["opencitations_rescue"]["true_citation_source_conflict_flag"] is True
+    assert by_id["opencitations_rescue"]["true_citation_source_agreement"] == "conflict"
+    assert by_id["all_zero"]["true_citation_raw"] == 0.0
+    assert by_id["all_zero"]["true_citation_source"] == "multi_source_zero"
+    assert by_id["all_zero"]["true_citation_crossref_raw"] == 0.0
+    assert by_id["all_zero"]["true_citation_source_count"] == 4
+    assert by_id["all_zero"]["true_citation_positive_source_count"] == 0
+    assert by_id["all_zero"]["true_citation_source_conflict_flag"] is False
+    assert by_id["all_zero"]["true_citation_source_agreement"] == "all_zero"
+    assert by_id["europepmc_ncbi"]["true_citation_raw"] == 15.0
+    assert by_id["europepmc_ncbi"]["true_citation_source"] == "ncbi_pubmed"
+    assert by_id["europepmc_ncbi"]["true_citation_openalex_raw"] == 0.0
+    assert by_id["europepmc_ncbi"]["true_citation_europepmc_raw"] == 12.0
+    assert by_id["europepmc_ncbi"]["true_citation_ncbi_pubmed_raw"] == 15.0
+    assert by_id["europepmc_ncbi"]["true_citation_source_conflict_flag"] is True
+    assert by_id["datacite_openaire"]["true_citation_raw"] == 11.0
+    assert by_id["datacite_openaire"]["true_citation_source"] == "openaire"
+    assert by_id["datacite_openaire"]["true_citation_datacite_raw"] == 3.0
+    assert by_id["datacite_openaire"]["true_citation_openaire_raw"] == 11.0
+    assert by_id["datacite_openaire"]["true_citation_source_conflict_flag"] is True
+    assert by_id["datacite_events"]["true_citation_raw"] == 12.0
+    assert by_id["datacite_events"]["true_citation_source"] == "datacite_events"
+    assert by_id["datacite_events"]["true_citation_datacite_events_raw"] == 12.0
+    assert by_id["datacite_events"]["true_citation_wikidata_raw"] == 8.0
+    assert by_id["crossref_data"]["true_citation_raw"] == 13.0
+    assert by_id["crossref_data"]["true_citation_source"] == "crossref_data_citations"
+    assert by_id["crossref_data"]["true_citation_crossref_data_citations_raw"] == 13.0
+    assert by_id["wikidata_only"]["true_citation_raw"] == 9.0
+    assert by_id["wikidata_only"]["true_citation_source"] == "wikidata"
+    assert by_id["wikidata_only"]["true_citation_wikidata_raw"] == 9.0
+    assert by_id["supplied"]["true_citation_raw"] == 10.0
+    assert by_id["supplied"]["true_citation_source"] == "supplied_citation_count"
+    assert by_id["supplied"]["true_citation_supplied_raw"] == 10.0
+    assert by_id["openalex"]["true_citation_score"] == 100.0
+
+
+def test_true_citation_fields_include_high_recall_external_exports():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "high_recall",
+                "title": "High recall imported citation evidence",
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 12,
+                        "ucite_citation_count": 31,
+                        "nih_occ_citation_count": 29,
+                        "dimensions_citation_count": 42,
+                        "scopus_citation_count": 40,
+                        "web_of_science_citation_count": 38,
+                        "lens_citation_count": 41,
+                        "google_scholar_citation_count": 57,
+                    }
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "comparison",
+                "title": "Comparison paper",
+                "metadata": {
+                    "external_impact": {
+                        "openalex_cited_by_count": 20,
+                        "semantic_scholar_citation_count": 20,
+                    }
+                },
+                "references": [],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    by_id = {row["paper_id"]: row for row in result["rankings"]}
+
+    assert by_id["high_recall"]["true_citation_raw"] == 57.0
+    assert by_id["high_recall"]["true_citation_source"] == "google_scholar"
+    assert by_id["high_recall"]["true_citation_openalex_raw"] == 12.0
+    assert by_id["high_recall"]["true_citation_ucite_raw"] == 31.0
+    assert by_id["high_recall"]["true_citation_nih_occ_raw"] == 29.0
+    assert by_id["high_recall"]["true_citation_dimensions_raw"] == 42.0
+    assert by_id["high_recall"]["true_citation_scopus_raw"] == 40.0
+    assert by_id["high_recall"]["true_citation_web_of_science_raw"] == 38.0
+    assert by_id["high_recall"]["true_citation_lens_raw"] == 41.0
+    assert by_id["high_recall"]["true_citation_google_scholar_raw"] == 57.0
+    assert by_id["high_recall"]["true_citation_source_count"] == 8
+    assert by_id["high_recall"]["true_citation_positive_source_count"] == 8
+    assert by_id["high_recall"]["true_citation_source_conflict_flag"] is True
+    assert by_id["high_recall"]["true_citation_source_spread"] == 45.0
+    assert by_id["high_recall"]["true_citation_score"] == 100.0
+
+
+def test_true_citation_blocks_external_counts_when_external_title_mismatches():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "bad_identity",
+                "title": "Resting-State Coactivation Patterns of Language Reorganization in Brain Tumors",
+                "citation_count": 75,
+                "metadata": {
+                    "europepmc_title": "TbCAPs: A toolbox for co-activation pattern analysis.",
+                    "external_impact": {
+                        "openalex_cited_by_count": 3,
+                        "semantic_scholar_citation_count": 64,
+                        "crossref_is_referenced_by_count": 75,
+                        "europepmc_cited_by_count": 68,
+                        "ncbi_pubmed_citedin_count": 34,
+                    },
+                },
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "good_identity",
+                "title": "Matching external title",
+                "metadata": {
+                    "europepmc_title": "Matching external title",
+                    "external_impact": {"crossref_is_referenced_by_count": 10},
+                },
+                "references": [],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    by_id = {row["paper_id"]: row for row in result["rankings"]}
+
+    assert by_id["bad_identity"]["true_citation_raw"] is None
+    assert by_id["bad_identity"]["true_citation_score"] == 0.0
+    assert by_id["bad_identity"]["true_citation_source"] == "external_identity_mismatch"
+    assert by_id["bad_identity"]["true_citation_crossref_raw"] == 75.0
+    assert by_id["bad_identity"]["true_citation_identity_status"] == "mismatch"
+    assert by_id["bad_identity"]["true_citation_identity_similarity"] < 0.7
+    assert "TbCAPs" in by_id["bad_identity"]["true_citation_identity_external_title"]
+    assert by_id["bad_identity"]["final_impact_score"] == 0.0
+    assert by_id["good_identity"]["true_citation_raw"] == 10.0
+    assert by_id["good_identity"]["true_citation_identity_status"] == "matched"
 
 
 def test_compute_impact_index_v2_redistributes_missing_signals_but_marks_weak_evidence():
@@ -588,7 +1006,8 @@ def test_compute_impact_index_v2_adds_v3_evidence_first_external_adoption_layer(
     result = compute_impact_index_v2(papers, pairwise_rankings)
     by_id = {row["paper_id"]: row for row in result["rankings"]}
 
-    assert result["summary"]["version"] == "impact_index_v3_evidence_first"
+    assert result["summary"]["version"] == "true_effective_citation_impact_v1"
+    assert result["summary"]["legacy_fusion_version"] == "impact_index_v3_evidence_first"
     assert "external_adoption" in result["summary"]["signal_availability"]
     assert result["summary"]["evidence_first"]["high_or_better_rate"] == 0.5
     assert result["summary"]["evidence_first"]["dominant_score_family_counts"][
@@ -881,6 +1300,178 @@ def test_compute_impact_index_records_life_science_effective_citations():
     assert row["effective_citation_coverage"] == "contextualized"
 
 
+def test_compute_impact_index_counts_cross_source_duplicate_edge_once():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "assay",
+                "title": "Reusable biomarker assay",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "trial",
+                "title": "Trial using assay",
+                "references": [
+                    {
+                        "reference_id": "assay",
+                        "title": "Reusable biomarker assay",
+                        "raw_citation": "Input reference list edge",
+                    },
+                    {
+                        "reference_id": "assay",
+                        "title": "Reusable biomarker assay",
+                        "raw_citation": "OpenCitations internal DOI edge",
+                    },
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "assay",
+                        "sentence": "The assay protocol was used for stratification.",
+                        "section": "Methods",
+                    }
+                ],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    row = {row["paper_id"]: row for row in result["rankings"]}["assay"]
+
+    assert row["effective_citation_edge_count"] == 1
+    assert row["effective_citation_context_count"] == 1
+    assert row["effective_citation_method_count"] == 1
+    assert row["effective_citation_raw"] == 1.6
+
+
+def test_compute_impact_index_uses_impact_selected_references_as_effective_citations():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "assay",
+                "title": "Reusable biomarker assay",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "trial",
+                "title": "Trial using assay",
+                "references": [
+                    {"reference_id": "assay", "title": "Reusable biomarker assay"}
+                ],
+                "metadata": {
+                    "impact_selected_references": [
+                        {
+                            "reference_id": "assay",
+                            "rank": 1,
+                            "confidence": 0.82,
+                            "valid": True,
+                        }
+                    ]
+                },
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "background",
+                "title": "Background-only article",
+                "references": [
+                    {"reference_id": "assay", "title": "Reusable biomarker assay"}
+                ],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    row = {row["paper_id"]: row for row in result["rankings"]}["assay"]
+
+    assert row["effective_citation_edge_count"] == 2
+    assert row["effective_citation_context_count"] == 0
+    assert row["effective_citation_unknown_count"] == 2
+    assert row["effective_citation_impact_selected_count"] == 1
+    assert row["effective_citation_impact_selected_top5_count"] == 1
+    assert row["effective_citation_impact_selected_raw"] == 1.0
+    assert row["effective_citation_raw"] == 1.1
+    assert row["effective_citation_count"] == 1
+    assert row["effective_citation_evidence_level"] == "low"
+
+
+def test_compute_impact_index_does_not_double_count_impact_selection_over_context():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "assay",
+                "title": "Reusable biomarker assay",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "trial",
+                "title": "Trial using assay",
+                "references": [
+                    {"reference_id": "assay", "title": "Reusable biomarker assay"}
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "assay",
+                        "sentence": "We used the assay protocol from the prior study.",
+                        "section": "Methods",
+                    }
+                ],
+                "metadata": {
+                    "impact_selected_references": [
+                        {"reference_id": "assay", "rank": 1, "valid": True}
+                    ]
+                },
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    row = {row["paper_id"]: row for row in result["rankings"]}["assay"]
+
+    assert row["effective_citation_method_count"] == 1
+    assert row["effective_citation_impact_selected_count"] == 1
+    assert row["effective_citation_impact_selected_raw"] == 1.0
+    assert row["effective_citation_raw"] == 1.6
+
+
 def test_compute_impact_index_accepts_life_science_external_evidence_aliases():
     papers = [
         Paper.model_validate(
@@ -1051,8 +1642,19 @@ def test_compute_impact_index_v2_applies_custom_weights_to_v3_evidence_layer():
         },
     )
 
-    assert citation_weighted["rankings"][0]["paper_id"] == "citation"
-    assert momentum_weighted["rankings"][0]["paper_id"] == "momentum"
+    citation_by_id = {row["paper_id"]: row for row in citation_weighted["rankings"]}
+    momentum_by_id = {row["paper_id"]: row for row in momentum_weighted["rankings"]}
+
+    assert citation_by_id["citation"]["impact_index_v2"] > citation_by_id["momentum"][
+        "impact_index_v2"
+    ]
+    assert momentum_by_id["momentum"]["impact_index_v2"] > momentum_by_id["citation"][
+        "impact_index_v2"
+    ]
+    assert momentum_weighted["rankings"][0]["paper_id"] == "citation"
+    assert momentum_weighted["rankings"][0]["final_score_method"] == (
+        "true_effective_citation_impact_v1"
+    )
 
 
 def test_compute_impact_index_v3_does_not_treat_zero_external_counts_as_strong_evidence():
@@ -1162,4 +1764,5 @@ def test_compute_impact_index_v3_uses_credibility_adjusted_final_score_for_sorti
         "final_impact_score"
     ]
     assert result["rankings"][0]["paper_id"] == "evidence"
-    assert result["summary"]["evidence_first"]["credibility_adjustment"]["adjusted_sorting"] is True
+    assert result["summary"]["evidence_first"]["credibility_adjustment"]["adjusted_sorting"] is False
+    assert by_id["evidence"]["final_score_method"] == "true_effective_citation_impact_v1"

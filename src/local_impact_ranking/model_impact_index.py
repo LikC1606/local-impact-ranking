@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import csv
-import heapq
 import json
 import math
 import random
 import re
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from itertools import combinations
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
+from local_impact_ranking.citation_completeness_audit import (
+    citation_completeness_audit_report,
+    render_citation_completeness_audit_markdown,
+    write_citation_completeness_papers_csv,
+)
 from local_impact_ranking.external_evidence_readiness import (
     external_evidence_paper_coverage_rows,
     external_evidence_readiness_report,
@@ -42,6 +46,8 @@ PAIRWISE_SHORT_FIELD_CHAR_BUDGET = 120
 DIRECT_ABSTRACT_CHAR_BUDGET = 3000
 DIRECT_TITLE_CHAR_BUDGET = 360
 DIRECT_SHORT_FIELD_CHAR_BUDGET = 160
+MAX_UNBOUNDED_PAIR_PLAN_ITEMS = 1_000_000
+MAX_SHUFFLED_PAIR_MATERIALIZATION_ITEMS = 1_000_000
 
 
 def model_score_dataset(
@@ -240,6 +246,7 @@ def model_score_dataset(
     )
     external_readiness = external_evidence_readiness_report(papers)
     external_paper_coverage_rows = external_evidence_paper_coverage_rows(papers)
+    citation_completeness = citation_completeness_audit_report(papers)
     _attach_ranking_quality(rankings, ranking_quality)
     _attach_pairwise_stability(rankings, pairwise_stability)
     _attach_final_score_stability(rankings, final_score_stability)
@@ -260,7 +267,8 @@ def model_score_dataset(
                 sum(judgment["parseable"] for judgment in judgments),
                 len(judgments),
             ),
-            "scoring_method": "impact_index_v3_evidence_first",
+            "scoring_method": "true_effective_citation_impact_v1",
+            "legacy_scoring_method": "impact_index_v3_evidence_first",
             "model_pairwise_scoring_method": _pairwise_scoring_method_name(
                 pairwise_aggregation_method
             ),
@@ -291,6 +299,7 @@ def model_score_dataset(
                 "reason": "No validity labels were supplied to model-score-dataset.",
             },
             "external_evidence_readiness": external_readiness,
+            "citation_completeness_audit": citation_completeness,
             "impact_dimension_coverage": ranking_dimension_coverage(rankings),
         },
         "rankings": rankings,
@@ -327,6 +336,18 @@ def model_score_dataset(
     write_external_evidence_paper_coverage_csv(
         external_paper_coverage_rows,
         destination / "external_evidence_paper_coverage.csv",
+    )
+    (destination / "citation_completeness_audit.json").write_text(
+        json.dumps(citation_completeness, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (destination / "citation_completeness_audit.md").write_text(
+        render_citation_completeness_audit_markdown(citation_completeness),
+        encoding="utf-8",
+    )
+    write_citation_completeness_papers_csv(
+        citation_completeness["papers"],
+        destination / "citation_completeness_papers.csv",
     )
     (destination / "pairwise_stability.json").write_text(
         json.dumps(pairwise_stability, indent=2) + "\n",
@@ -993,16 +1014,37 @@ def pairwise_comparison_plan(
         raise ValueError("comparison_rounds must be at least 1")
     if pair_sampling not in {"sequential", "coverage"}:
         raise ValueError("pair_sampling must be 'sequential' or 'coverage'")
-    base_pairs = list(combinations(papers, 2))
+    total_pair_count = len(papers) * (len(papers) - 1) // 2
+    total_plan_count = total_pair_count * comparison_rounds
+    if (
+        max_pairs is None
+        and total_plan_count > MAX_UNBOUNDED_PAIR_PLAN_ITEMS
+    ):
+        raise ValueError(
+            "Unbounded pairwise plan would materialize "
+            f"{total_plan_count} comparisons; set max_pairs or use pair_budget=auto "
+            "for large datasets."
+        )
+    if max_pairs is not None and max_pairs <= 0:
+        return []
     rng = random.Random(seed)
     plan: list[dict[str, Any]] = []
     for round_number in range(1, comparison_rounds + 1):
+        remaining_budget = None if max_pairs is None else max_pairs - len(plan)
+        if remaining_budget is not None and remaining_budget <= 0:
+            return plan
         if pair_sampling == "coverage":
-            round_pairs = _coverage_ordered_pairs(papers, rng=rng if shuffle_pairs else None)
+            round_pairs = _coverage_ordered_pairs(
+                papers,
+                rng=rng if shuffle_pairs else None,
+                max_pairs=remaining_budget,
+            )
         else:
-            round_pairs = list(base_pairs)
-            if shuffle_pairs:
-                rng.shuffle(round_pairs)
+            round_pairs = _sequential_ordered_pairs(
+                papers,
+                rng=rng if shuffle_pairs else None,
+                max_pairs=remaining_budget,
+            )
         for paper_a, paper_b in round_pairs:
             if max_pairs is not None and len(plan) >= max_pairs:
                 return plan
@@ -1015,6 +1057,67 @@ def pairwise_comparison_plan(
                 }
             )
     return plan
+
+
+def _sequential_ordered_pairs(
+    papers: list[Paper],
+    *,
+    rng: random.Random | None = None,
+    max_pairs: int | None = None,
+) -> list[tuple[Paper, Paper]]:
+    if len(papers) < 2 or max_pairs == 0:
+        return []
+    total_pair_count = len(papers) * (len(papers) - 1) // 2
+    if rng is not None:
+        if total_pair_count <= MAX_SHUFFLED_PAIR_MATERIALIZATION_ITEMS:
+            pairs = list(_iter_all_pairs(papers))
+            rng.shuffle(pairs)
+            return pairs[:max_pairs]
+        if max_pairs is None:
+            raise ValueError(
+                "Shuffled unbounded pairwise planning is too large; set max_pairs."
+            )
+        return _random_unique_pairs(papers, rng=rng, max_pairs=max_pairs)
+
+    pairs: list[tuple[Paper, Paper]] = []
+    for pair in _iter_all_pairs(papers):
+        pairs.append(pair)
+        if max_pairs is not None and len(pairs) >= max_pairs:
+            break
+    return pairs
+
+
+def _iter_all_pairs(papers: list[Paper]):
+    for left_index in range(len(papers)):
+        for right_index in range(left_index + 1, len(papers)):
+            yield papers[left_index], papers[right_index]
+
+
+def _random_unique_pairs(
+    papers: list[Paper],
+    *,
+    rng: random.Random,
+    max_pairs: int,
+) -> list[tuple[Paper, Paper]]:
+    if len(papers) < 2 or max_pairs <= 0:
+        return []
+    total_pair_count = len(papers) * (len(papers) - 1) // 2
+    target_count = min(max_pairs, total_pair_count)
+    pairs: list[tuple[Paper, Paper]] = []
+    seen: set[tuple[str, str]] = set()
+    while len(pairs) < target_count:
+        left_index = rng.randrange(len(papers))
+        right_index = rng.randrange(len(papers) - 1)
+        if right_index >= left_index:
+            right_index += 1
+        left = papers[left_index]
+        right = papers[right_index]
+        pair_key = _paper_pair_key(left, right)
+        if pair_key in seen:
+            continue
+        seen.add(pair_key)
+        pairs.append((left, right))
+    return pairs
 
 
 def pair_budget_plan(
@@ -1062,37 +1165,47 @@ def _coverage_ordered_pairs(
     papers: list[Paper],
     *,
     rng: random.Random | None = None,
+    max_pairs: int | None = None,
 ) -> list[tuple[Paper, Paper]]:
-    if len(papers) < 2:
+    if len(papers) < 2 or max_pairs == 0:
         return []
 
+    limit = max_pairs
     remaining = list(papers)
     ordered: list[tuple[Paper, Paper]] = []
     used_keys: set[tuple[str, str]] = set()
     degrees: Counter[str] = Counter()
 
+    def add_pair(left: Paper, right: Paper) -> bool:
+        if left.paper_id == right.paper_id:
+            return False
+        pair_key = _paper_pair_key(left, right)
+        if pair_key in used_keys:
+            return False
+        ordered.append((left, right))
+        used_keys.add(pair_key)
+        degrees[left.paper_id] += 1
+        degrees[right.paper_id] += 1
+        return limit is not None and len(ordered) >= limit
+
+    initial_pairs: list[tuple[Paper, Paper]] = []
     while len(remaining) >= 2:
         left = remaining.pop(0)
         right = remaining.pop(0)
-        ordered.append((left, right))
-        used_keys.add(_paper_pair_key(left, right))
-        degrees[left.paper_id] += 1
-        degrees[right.paper_id] += 1
+        initial_pairs.append((left, right))
     if remaining:
         left = remaining.pop(0)
         right = papers[0]
-        ordered.append((left, right))
-        used_keys.add(_paper_pair_key(left, right))
-        degrees[left.paper_id] += 1
-        degrees[right.paper_id] += 1
+        initial_pairs.append((left, right))
     if rng is not None:
-        rng.shuffle(ordered)
+        rng.shuffle(initial_pairs)
+    for left, right in initial_pairs:
+        if add_pair(left, right):
+            return ordered
 
     for left, right in _coverage_bridge_pairs(papers, used_keys=used_keys):
-        ordered.append((left, right))
-        used_keys.add(_paper_pair_key(left, right))
-        degrees[left.paper_id] += 1
-        degrees[right.paper_id] += 1
+        if add_pair(left, right):
+            return ordered
 
     ordered.extend(
         _degree_balanced_remaining_pairs(
@@ -1100,6 +1213,7 @@ def _coverage_ordered_pairs(
             used_keys=used_keys,
             degrees=degrees,
             rng=rng,
+            max_pairs=None if limit is None else limit - len(ordered),
         )
     )
     return ordered
@@ -1126,57 +1240,32 @@ def _degree_balanced_remaining_pairs(
     used_keys: set[tuple[str, str]],
     degrees: Counter[str],
     rng: random.Random | None,
+    max_pairs: int | None = None,
 ) -> list[tuple[Paper, Paper]]:
-    base_pairs = [
-        (left, right)
-        for left, right in combinations(papers, 2)
-        if _paper_pair_key(left, right) not in used_keys
-    ]
-    if rng is not None:
-        rng.shuffle(base_pairs)
-
-    heap: list[tuple[int, int, int, str, str, Paper, Paper]] = []
-    for order, (left, right) in enumerate(base_pairs):
-        left_degree = degrees[left.paper_id]
-        right_degree = degrees[right.paper_id]
-        heapq.heappush(
-            heap,
-            (
-                max(left_degree, right_degree),
-                left_degree + right_degree,
-                order,
-                left.paper_id,
-                right.paper_id,
-                left,
-                right,
-            ),
-        )
-
     ordered: list[tuple[Paper, Paper]] = []
-    emitted_keys: set[tuple[str, str]] = set()
-    while heap:
-        _, _, order, _, _, left, right = heapq.heappop(heap)
-        pair_key = _paper_pair_key(left, right)
-        if pair_key in emitted_keys:
-            continue
-        left_degree = degrees[left.paper_id]
-        right_degree = degrees[right.paper_id]
-        current_key = (
-            max(left_degree, right_degree),
-            left_degree + right_degree,
-            order,
-            left.paper_id,
-            right.paper_id,
-            left,
-            right,
-        )
-        if heap and current_key[:2] > heap[0][:2]:
-            heapq.heappush(heap, current_key)
-            continue
-        ordered.append((left, right))
-        emitted_keys.add(pair_key)
-        degrees[left.paper_id] += 1
-        degrees[right.paper_id] += 1
+    if len(papers) < 2 or max_pairs == 0:
+        return ordered
+
+    ordered_papers = list(papers)
+    if rng is not None:
+        rng.shuffle(ordered_papers)
+    paper_count = len(ordered_papers)
+    total_pair_count = paper_count * (paper_count - 1) // 2
+    remaining_total = total_pair_count - len(used_keys)
+    target_count = remaining_total if max_pairs is None else min(max_pairs, remaining_total)
+
+    for offset in range(1, paper_count):
+        for left_index, left in enumerate(ordered_papers):
+            right = ordered_papers[(left_index + offset) % paper_count]
+            pair_key = _paper_pair_key(left, right)
+            if pair_key in used_keys:
+                continue
+            used_keys.add(pair_key)
+            ordered.append((left, right))
+            degrees[left.paper_id] += 1
+            degrees[right.paper_id] += 1
+            if len(ordered) >= target_count:
+                return ordered
     return ordered
 
 
@@ -2445,6 +2534,24 @@ def render_model_impact_report_markdown(report: dict[str, Any]) -> str:
                 "| external_evidence_readiness.internal_reference_edge_count | "
                 f"{graph.get('internal_reference_edge_count', 0)} |"
             )
+        elif key == "citation_completeness_audit" and isinstance(value, dict):
+            summary = value.get("summary", {})
+            lines.append(
+                "| citation_completeness_audit.citation_evidence_coverage | "
+                f"{summary.get('citation_evidence_coverage', 0.0)} |"
+            )
+            lines.append(
+                "| citation_completeness_audit.multi_source_coverage | "
+                f"{summary.get('multi_source_coverage', 0.0)} |"
+            )
+            lines.append(
+                "| citation_completeness_audit.papers_with_source_conflict | "
+                f"{summary.get('papers_with_source_conflict', 0)} |"
+            )
+            lines.append(
+                "| citation_completeness_audit.papers_without_query_ids | "
+                f"{summary.get('papers_without_query_ids', 0)} |"
+            )
         elif key == "impact_validity_evaluation" and isinstance(value, dict):
             lines.append(f"| Impact Validity.status | {value.get('status', '')} |")
             lines.append(f"| Impact Validity.reason | {value.get('reason', '')} |")
@@ -2554,6 +2661,39 @@ def render_model_impact_report_markdown(report: dict[str, Any]) -> str:
                         f"{item.get('paper_coverage', 0.0)} |"
                     )
         lines.append("")
+    citation_completeness = report["summary"].get("citation_completeness_audit", {})
+    if isinstance(citation_completeness, dict):
+        summary = citation_completeness.get("summary", {})
+        grade_counts = summary.get("completeness_grade_counts", {})
+        lines.extend(
+            [
+                "",
+                "## Citation Completeness Audit",
+                "",
+                "| Metric | Value |",
+                "| --- | ---: |",
+                f"| citation_evidence_coverage | {summary.get('citation_evidence_coverage', 0.0)} |",
+                f"| multi_source_coverage | {summary.get('multi_source_coverage', 0.0)} |",
+                f"| mean_completeness_score | {summary.get('mean_completeness_score', 0.0)} |",
+                f"| positive_citation_evidence_coverage | {summary.get('positive_citation_evidence_coverage', 0.0)} |",
+                f"| papers_without_query_ids | {summary.get('papers_without_query_ids', 0)} |",
+                f"| papers_without_numeric_citation_evidence | {summary.get('papers_without_numeric_citation_evidence', 0)} |",
+                f"| papers_with_single_source_only | {summary.get('papers_with_single_source_only', 0)} |",
+                f"| papers_with_source_conflict | {summary.get('papers_with_source_conflict', 0)} |",
+                f"| papers_with_confirmed_multi_source_zero | {summary.get('papers_with_confirmed_multi_source_zero', 0)} |",
+            ]
+        )
+        if isinstance(grade_counts, dict) and grade_counts:
+            lines.extend(
+                [
+                    "",
+                    "| Completeness grade | Paper count |",
+                    "| --- | ---: |",
+                ]
+            )
+            for grade, paper_count in sorted(grade_counts.items()):
+                lines.append(f"| {grade} | {paper_count} |")
+        lines.append("")
     dimension_coverage = report["summary"].get("impact_dimension_coverage", {})
     fusion_summary = report["summary"].get("fusion", {})
     evidence_first_summary = (
@@ -2660,8 +2800,8 @@ def render_model_impact_report_markdown(report: dict[str, Any]) -> str:
             "",
             "## Top Papers",
             "",
-            "| Rank | Paper ID | Impact Index v3 | Evidence Score | Model Score | External Adoption | Life Science Translation | Citation | Relative Citation | Graph | Context | Effective Citation | Influential Citation | Momentum | Positive Evidence | Zero Evidence | Evidence Tier | Uncertainty | Reportability | Direct Score | Wins | Losses | Confidence | Title |",
-            "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+            "| Rank | Paper ID | Final Impact | True Citation | Effective Citation | True Citation Raw | True Citation Source | Impact Index v3 | Model Score | External Adoption | Life Science Translation | Relative Citation | Graph | Context | Influential Citation | Momentum | Positive Evidence | Zero Evidence | Evidence Tier | Uncertainty | Reportability | Direct Score | Wins | Losses | Confidence | Title |",
+            "| ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
         ]
     )
     for row in report["rankings"][:20]:
@@ -2671,16 +2811,18 @@ def render_model_impact_report_markdown(report: dict[str, Any]) -> str:
         )
         lines.append(
             f"| {row['rank']} | {row['paper_id']} | "
+            f"{float(row.get('final_impact_score', 0.0)):.3f} | "
+            f"{float(row.get('true_citation_score', 0.0)):.3f} | "
+            f"{float(row.get('effective_citation_score', 0.0)):.3f} | "
+            f"{float(row.get('true_citation_raw') or 0.0):.3f} | "
+            f"{row.get('true_citation_source', '')} | "
             f"{float(row.get('impact_index_v3', row.get('impact_index_v2', 0.0))):.3f} | "
-            f"{float(row.get('evidence_supported_score', 0.0)):.3f} | "
             f"{float(row.get('model_supported_score', row.get('impact_index', 0.0))):.3f} | "
             f"{float(row.get('external_adoption_score', 0.0)):.3f} | "
             f"{float(row.get('life_science_translation_score', 0.0)):.3f} | "
-            f"{float(row.get('field_year_normalized_citation_score', 0.0)):.3f} | "
             f"{float(row.get('relative_citation_ratio_score', 0.0)):.3f} | "
             f"{float(row.get('citation_graph_score', 0.0)):.3f} | "
             f"{float(row.get('citation_context_quality_score', 0.0)):.3f} | "
-            f"{float(row.get('effective_citation_score', 0.0)):.3f} | "
             f"{float(row.get('influential_citation_score', 0.0)):.3f} | "
             f"{float(row.get('temporal_momentum_score', 0.0)):.3f} | "
             f"{int(row.get('positive_evidence_signal_count') or 0)} | "
@@ -2751,13 +2893,16 @@ def render_model_impact_report_markdown(report: dict[str, Any]) -> str:
             "",
             "## Scoring Note",
             "",
-            "`impact_index_v3` is the raw evidence-first score. `final_impact_score` is the credibility-adjusted score used for sorting and reporting; it discounts model-only or weak-evidence rows.",
+            "`final_impact_score` is the report score used for sorting. It uses only two categories: `0.95 * true_citation_score + 0.05 * effective_citation_score`.",
+            "`score_100_true_00_effective`, `score_95_true_05_effective`, `score_90_true_10_effective`, `score_80_true_20_effective`, `score_70_true_30_effective`, `score_50_true_50_effective`, and `score_30_true_70_effective` are sensitivity fields for auditing weight dependence.",
+            "`true_citation_score` is the dataset-local tied-rank percentile of `log1p(true_citation_raw)`, with `true_citation_source` disclosing the selected citation database or supplied field.",
+            "`effective_citation_score` is the dataset-local tied-rank percentile of weighted incoming effective citations from internal reference edges and citation contexts.",
+            "`impact_index_v3` is retained as a legacy diagnostic evidence-first score and is not used as the final report score.",
             "`impact_index_v2` is retained as the earlier compatibility score for audit and ablation.",
-            "`impact_index` is the model-assisted pairwise score. The default aggregation is order-independent Rank Centrality; `elo_rating` remains available as an audit field.",
-            "OpenAlex/BIP/Semantic Scholar compatible external evidence can feed field/year percentile, BIP impact, and influential-citation score components when supplied.",
-            "Life-science fields such as NIH RCR, PubMed citation counts, clinical-trial citations, guideline mentions, drug-approval mentions, protocol reuse, and reagent/assay reuse are recorded as auditable citation, translation, policy/guideline, and artifact-adoption evidence.",
-            "Effective citation fields classify incoming internal citation contexts into guideline, clinical, method, dataset/tool, supporting, negative/contrasting, background, or unknown roles.",
-            "Missing signal weights are redistributed per paper, and `evidence_quality_flag`, `uncertainty_band`, and `reportability_status` mark weak or sensitive scores instead of hiding sparse data.",
+            "`impact_index` is the model-assisted pairwise score. It remains available for diagnostics but does not directly change `final_impact_score`.",
+            "OpenAlex, Semantic Scholar, PubMed/iCite, OpenCitations, and supplied citation counts can feed `true_citation_raw`; they are not summed across sources.",
+            "Life-science effective citations classify incoming internal citation contexts into guideline, clinical, method, dataset/tool, supporting, negative/contrasting, background, or unknown roles.",
+            "Missing true/effective citation categories contribute 0 to the final score instead of being imputed.",
             "Direct scores are diagnostic local-impact priors and are not used as the final score.",
             "`Confidence` combines comparison coverage and mean pairwise model confidence. If an empirical calibration report is supplied, calibrated pairwise confidence is used for the final confidence field.",
             "When logprobs are unavailable, raw pairwise confidence defaults to 0.5.",
@@ -2808,6 +2953,17 @@ def render_impact_score_cards_markdown(report: dict[str, Any]) -> str:
                 "| --- | ---: |",
                 f"| paper_id | {card.get('paper_id', '')} |",
                 f"| final_impact_score | {_markdown_number(card.get('final_impact_score'))} |",
+                f"| final_score_method | {card.get('final_score_method', '')} |",
+                f"| true_effective_citation_impact_score | {_markdown_number(card.get('true_effective_citation_impact_score'))} |",
+                f"| score_100_true_00_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_100_true_00_effective'))} |",
+                f"| score_95_true_05_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_95_true_05_effective'))} |",
+                f"| score_90_true_10_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_90_true_10_effective'))} |",
+                f"| score_50_true_50_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_50_true_50_effective'))} |",
+                f"| score_70_true_30_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_70_true_30_effective'))} |",
+                f"| score_80_true_20_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_80_true_20_effective'))} |",
+                f"| score_30_true_70_effective | {_markdown_number(card.get('sensitivity_scores', {}).get('score_30_true_70_effective'))} |",
+                f"| true_citation_score | {_markdown_number(components.get('true_citation'))} |",
+                f"| effective_citation_score | {_markdown_number(components.get('effective_citation'))} |",
                 f"| impact_index_v3 | {_markdown_number(card.get('impact_index_v3'))} |",
                 f"| evidence_supported_score | {_markdown_number(card.get('evidence_supported_score'))} |",
                 f"| model_supported_score | {_markdown_number(card.get('model_supported_score'))} |",
@@ -2823,7 +2979,7 @@ def render_impact_score_cards_markdown(report: dict[str, Any]) -> str:
                 "",
                 "| Component | Score | Raw |",
                 "| --- | ---: | ---: |",
-                f"| Citation | {_markdown_number(components.get('field_year_normalized_citation'))} | {_markdown_number(raw.get('citation_count'))} |",
+                f"| True Citation | {_markdown_number(components.get('true_citation'))} | {_markdown_number(raw.get('true_citation'))} |",
                 f"| Relative Citation | {_markdown_number(components.get('relative_citation_ratio'))} | {_markdown_number(raw.get('relative_citation_ratio'))} |",
                 f"| Graph | {_markdown_number(components.get('citation_graph'))} | {_markdown_number(raw.get('citation_graph'))} |",
                 f"| Context | {_markdown_number(components.get('citation_context_quality'))} | {_markdown_number(raw.get('citation_context_quality'))} |",
@@ -2852,6 +3008,19 @@ def _impact_score_card(row: dict[str, Any]) -> dict[str, Any]:
         "paper_id": row.get("paper_id"),
         "title": row.get("title"),
         "final_impact_score": row.get("final_impact_score"),
+        "final_score_method": row.get("final_score_method"),
+        "true_effective_citation_impact_score": row.get(
+            "true_effective_citation_impact_score"
+        ),
+        "sensitivity_scores": {
+            "score_100_true_00_effective": row.get("score_100_true_00_effective"),
+            "score_95_true_05_effective": row.get("score_95_true_05_effective"),
+            "score_90_true_10_effective": row.get("score_90_true_10_effective"),
+            "score_50_true_50_effective": row.get("score_50_true_50_effective"),
+            "score_70_true_30_effective": row.get("score_70_true_30_effective"),
+            "score_80_true_20_effective": row.get("score_80_true_20_effective"),
+            "score_30_true_70_effective": row.get("score_30_true_70_effective"),
+        },
         "impact_index_v3": row.get("impact_index_v3"),
         "impact_index_v2": row.get("impact_index_v2"),
         "credibility_adjusted_impact_score": row.get(
@@ -2872,6 +3041,7 @@ def _impact_score_card(row: dict[str, Any]) -> dict[str, Any]:
         "confidence": row.get("confidence"),
         "missing_high_value_evidence": row.get("missing_high_value_evidence", []),
         "component_scores": {
+            "true_citation": row.get("true_citation_score", 0.0),
             "field_year_normalized_citation": row.get(
                 "field_year_normalized_citation_score",
                 0.0,
@@ -2895,6 +3065,8 @@ def _impact_score_card(row: dict[str, Any]) -> dict[str, Any]:
             "award": row.get("award_impact_score", 0.0),
         },
         "raw_evidence": {
+            "true_citation": row.get("true_citation_raw"),
+            "true_citation_source": row.get("true_citation_source"),
             "citation_count": row.get("citation_count_raw"),
             "citation_outlier_flag": row.get("citation_outlier_flag"),
             "citation_outlier_ratio": row.get("citation_outlier_ratio"),
@@ -3613,7 +3785,9 @@ def _write_pairwise_stability_csv(path: Path, report: dict[str, Any]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in report.get("papers", []):
-            writer.writerow({field: row.get(field, "") for field in fieldnames})
+            writer.writerow(
+                sanitize_csv_row({field: row.get(field, "") for field in fieldnames})
+            )
 
 
 def render_final_score_stability_markdown(report: dict[str, Any]) -> str:
@@ -3681,7 +3855,9 @@ def _write_final_score_stability_csv(path: Path, report: dict[str, Any]) -> None
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in report.get("papers", []):
-            writer.writerow({field: row.get(field, "") for field in fieldnames})
+            writer.writerow(
+                sanitize_csv_row({field: row.get(field, "") for field in fieldnames})
+            )
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -3695,6 +3871,15 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "rank",
         "paper_id",
         "title",
+        "final_score_method",
+        "true_effective_citation_impact_score",
+        "score_100_true_00_effective",
+        "score_95_true_05_effective",
+        "score_90_true_10_effective",
+        "score_50_true_50_effective",
+        "score_70_true_30_effective",
+        "score_80_true_20_effective",
+        "score_30_true_70_effective",
         "impact_index_v3",
         "impact_index_v2",
         "final_impact_score",
@@ -3713,6 +3898,7 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "impact_index",
         "model_pairwise_rank",
         "model_pairwise_score",
+        "true_citation_score",
         "field_year_normalized_citation_score",
         "relative_citation_ratio_score",
         "citation_graph_score",
@@ -3730,6 +3916,33 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "bip_impact_score",
         "life_science_translation_score",
         "model_pairwise_raw",
+        "true_citation_raw",
+        "true_citation_source",
+        "true_citation_openalex_raw",
+        "true_citation_semantic_scholar_raw",
+        "true_citation_pubmed_icite_raw",
+        "true_citation_opencitations_raw",
+        "true_citation_crossref_raw",
+        "true_citation_crossref_data_citations_raw",
+        "true_citation_datacite_raw",
+        "true_citation_datacite_events_raw",
+        "true_citation_openaire_raw",
+        "true_citation_wikidata_raw",
+        "true_citation_europepmc_raw",
+        "true_citation_ncbi_pubmed_raw",
+        "true_citation_supplied_raw",
+        "true_citation_min_raw",
+        "true_citation_max_raw",
+        "true_citation_source_count",
+        "true_citation_positive_source_count",
+        "true_citation_source_agreement",
+        "true_citation_source_conflict_flag",
+        "true_citation_source_spread",
+        "true_citation_source_spread_ratio",
+        "true_citation_identity_status",
+        "true_citation_identity_similarity",
+        "true_citation_identity_external_title",
+        "true_citation_identity_reason",
         "field_year_normalized_citation_raw",
         "relative_citation_ratio_raw",
         "relative_citation_rate_raw",
@@ -3770,6 +3983,9 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "evidence_first_signal_count",
         "positive_evidence_signal_count",
         "zero_evidence_signal_count",
+        "final_score_signal_count",
+        "final_score_available_signals",
+        "final_score_missing_signals",
         "fusion_weight_model_pairwise",
         "fusion_weight_field_year_normalized_citation",
         "fusion_weight_citation_graph",
@@ -3832,7 +4048,9 @@ def _write_impact_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fieldnames})
+            writer.writerow(
+                sanitize_csv_row({field: row.get(field, "") for field in fieldnames})
+            )
 
 
 def _write_direct_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -3848,7 +4066,9 @@ def _write_direct_scores_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fieldnames})
+            writer.writerow(
+                sanitize_csv_row({field: row.get(field, "") for field in fieldnames})
+            )
 
 
 def _safe_divide(numerator: int, denominator: int) -> float:

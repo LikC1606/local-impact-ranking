@@ -89,7 +89,7 @@ For paper-level `impact_index_v3`, the scorer now records an effective-citation 
 
 The detailed reproducible specification is in [effective-citation-calculation.md](effective-citation-calculation.md). Source-specific citation evidence and reconciliation rules are in [citation-data-sources.md](citation-data-sources.md).
 
-The unit is an incoming internal citation edge: a paper in the supplied dataset cites another paper in the same dataset through `references[].reference_id`. Each edge receives at most one primary weighted credit, based on the strongest role found in its explicit citation contexts:
+The unit is an incoming internal citation edge: a paper in the supplied dataset cites another paper in the same dataset through `references[].reference_id`. Repeated reference entries inside the same citing paper are deduplicated during normalization, and citation contexts are remapped to the kept reference ID, so PDF extraction duplicates do not inflate `effective_citation_*` counts. Each source-paper to cited-paper edge receives at most one primary weighted credit, based on the stronger of explicit citation-context roles and constrained ImpactRankings-style local-model key-reference evidence:
 
 ```text
 guideline                 -> 2.00
@@ -100,15 +100,23 @@ negative_or_contrasting   -> 1.10
 supporting_result         -> 1.00
 background                -> 0.35
 unknown_edge_no_context   -> 0.10
+impact_selected_rank_1    -> 1.00
+impact_selected_rank_2    -> 0.80
+impact_selected_rank_3    -> 0.60
+impact_selected_rank_4    -> 0.40
+impact_selected_rank_5    -> 0.20
 ```
 
-`effective_citation_raw` is the sum of those per-edge weights. `effective_citation_score` is a 0-100 tied-rank percentile computed from `log1p(effective_citation_raw)` inside the supplied dataset. The same raw signal backs `citation_context_quality_score`, so life-science citation roles affect the evidence-supported impact score without creating an opaque extra model signal.
+Local-model key-reference selections are read from `metadata.impact_selected_references` and compatible metadata keys. They are accepted only when the selected `reference_id` is a real reference of the citing paper and a paper in the supplied dataset. If both context and model-selection evidence exist for the same edge, the scorer uses `max(context_role_weight, impact_selected_reference_weight)` rather than adding both.
+
+`effective_citation_raw` is the sum of those per-edge max weights. `effective_citation_score` is a 0-100 tied-rank percentile computed from `log1p(effective_citation_raw)` inside the supplied dataset. The same raw signal backs `citation_context_quality_score`, so life-science citation roles and constrained key-reference selections affect the evidence-supported impact score without creating an opaque extra model signal.
 
 The output records both the score and the audit counts:
 
 - `effective_citation_edge_count`: incoming internal citation edges.
 - `effective_citation_context_count`: explicit citation contexts attached to those edges.
-- `effective_citation_count`: incoming edges with a strong role: guideline, clinical, method, dataset/tool, supporting, or negative/contrasting.
+- `effective_citation_count`: incoming edges with a strong role or a constrained top-5 local-model key-reference selection.
+- `effective_citation_context_role_raw`, `effective_citation_impact_selected_raw`, `effective_citation_impact_selected_count`, `effective_citation_impact_selected_top5_count`: audit fields separating explicit context evidence from ImpactRankings-style model-selected evidence.
 - `effective_citation_guideline_count`, `effective_citation_clinical_count`, `effective_citation_method_count`, `effective_citation_dataset_or_tool_count`, `effective_citation_supporting_count`, `effective_citation_negative_count`, `effective_citation_background_count`, `effective_citation_unknown_count`: role observations from contexts or edge-only records.
 - `effective_citation_coverage`: `contextualized`, `partial_context`, `edge_only`, or `missing`.
 - `effective_citation_evidence_level`: `high`, `moderate`, `low`, `weak_background_or_unknown`, or `missing`.
@@ -197,11 +205,65 @@ Per-paper confidence flags are evidence labels, not score corrections:
 - `fragile`: the paper has influence score but weak context/graph support or highly concentrated strict top-k credit.
 - `low_evidence`: the paper has no positive raw score or only expanded low-rank evidence without context or graph support.
 
-## Local Model Impact Index v3
+## Final Paper Impact Score
 
-The `model-score-dataset` command writes a paper-level fused score named `impact_index_v3`. This is the main deliverable when the user wants to provide a paper dataset and receive an influence score for each paper. It is evidence-first: model pairwise judging helps, but the final score gives priority to auditable citation, graph, context, momentum, and external adoption evidence.
+The `model-score-dataset` command sorts and reports papers by `final_impact_score`. The final score uses only two categories:
+
+1. `true_citation_score`: the true citation-count signal.
+2. `effective_citation_score`: the effective citation-count signal.
 
 Formula:
+
+```text
+final_impact_score =
+  0.95 * true_citation_score
++ 0.05 * effective_citation_score
+
+true_citation_score =
+  tied_rank_percentile(log1p(true_citation_raw))
+
+effective_citation_score =
+  tied_rank_percentile(log1p(effective_citation_raw))
+```
+
+Missing true/effective citation categories contribute 0; they are not imputed and their absence is reported in `final_score_missing_signals`. The default weighting is citation-heavy because expanded public-current-impact checks with OpCitance and NIH iCite show stronger agreement with current RCR and citation-count indicators when the true-citation component dominates, and because effective-citation context coverage is often incomplete.
+
+The scorer also writes sensitivity fields so reports can show whether conclusions depend on the weight choice:
+
+- `score_100_true_00_effective`
+- `score_95_true_05_effective`
+- `score_90_true_10_effective`
+- `score_50_true_50_effective`
+- `score_70_true_30_effective`
+- `score_80_true_20_effective`
+- `score_30_true_70_effective`
+
+`true_citation_raw` is selected from one source per paper, not summed across databases. The current policy collects named compatible source counts, applies the external-title identity guard, then selects the maximum non-null count. Source-specific raw fields remain in the CSV/JSONL so disagreements can be audited.
+
+```text
+max(OpenAlex, Semantic Scholar, PubMed/iCite, OpenCitations, Crossref, DataCite, OpenAIRE, Europe PMC, NCBI PubMed, supplied citation_count)
+```
+
+The selected source is written to `true_citation_source`. For life-science corpora with better PMID/PMCID coverage than DOI/OpenAlex coverage, PubMed/iCite can be promoted in a documented preprocessing step, but the scoring artifact must disclose the source used for each paper.
+
+`effective_citation_raw` is the weighted count of incoming internal citation edges. The detailed role weights are in [effective-citation-calculation.md](effective-citation-calculation.md). In short, guideline, clinical, method/protocol, dataset/tool, supporting, negative/contrasting citations, and constrained top-5 key-reference selections count as stronger evidence than background-only or unknown edge-only citations. If context and model-selection evidence exist on the same edge, the scorer uses a per-edge maximum instead of summing them.
+
+The main output fields are:
+
+- `final_impact_score`: the report score used for sorting.
+- `true_effective_citation_impact_score`: same numeric value as `final_impact_score` before source-quality exclusion.
+- `final_score_method`: currently `true_effective_citation_impact_v1`.
+- `true_citation_raw`, `true_citation_source`, `true_citation_score`.
+- Source-specific true-citation audit fields include `true_citation_openalex_raw`, `true_citation_semantic_scholar_raw`, `true_citation_pubmed_icite_raw`, `true_citation_opencitations_raw`, `true_citation_crossref_raw`, `true_citation_datacite_raw`, `true_citation_openaire_raw`, `true_citation_europepmc_raw`, `true_citation_ncbi_pubmed_raw`, and `true_citation_supplied_raw`.
+- `true_citation_identity_status`, `true_citation_identity_similarity`, `true_citation_identity_external_title`, and `true_citation_identity_reason`: external paper-identity audit fields. When an external source title clearly mismatches the local title, source-specific raw counts remain in the CSV, but `true_citation_raw` is left empty and the final score does not use those external citation counts.
+- `effective_citation_raw`, `effective_citation_count`, `effective_citation_score`, `effective_citation_coverage`, `effective_citation_evidence_level`.
+- `final_score_signal_count`, `final_score_available_signals`, `final_score_missing_signals`.
+
+## Legacy Diagnostic Scores
+
+The scorer still writes `impact_index_v2`, `impact_index_v3`, `model_supported_score`, `evidence_supported_score`, graph, momentum, external-adoption, and model pairwise fields for audit and ablation. These fields do not directly change `final_impact_score`.
+
+Legacy formulas:
 
 ```text
 impact_index_v3 =
@@ -224,8 +286,6 @@ impact_index_v2 =
 + 0.15 * citation_context_quality_score
 + 0.10 * temporal_momentum_score
 ```
-
-`impact_index_v2` is still written as a compatibility score for audit and ablation. `impact_index_v3` is stored in `final_impact_score` and used for sorting `impact_scores.csv/jsonl`.
 
 All component scores are normalized to 0-100 within the supplied dataset. If a signal is missing for a paper, its weight is redistributed across the available signals inside the same layer. For example, if evidence support has only field/year-normalized citations and Influential Citation evidence, their normalized evidence weights become `0.18 / 0.28` and `0.10 / 0.28`; the model-assisted layer remains separate and is capped by the `0.20 * model_supported_score` outer weight.
 
@@ -287,8 +347,8 @@ The output keeps audit fields: `fusion_signal_count`, `fusion_available_weight`,
 - `model_credibility_card`: a JSON/Markdown model-evidence gate generated by the user workflow from `configs/model_credibility/local-impact-judge-source-task-dpo.json`. It records cross-seed SciImpact accuracy, weak slices, `served_model`, `model_identity_match`, and whether the model can be used only with disclosure or claimed as high credibility. If the served model does not match the profile, the card reports `mismatched_profile` and the user workflow downgrades the run to exploratory use. The current recommended model is moderate credibility, not a standalone oracle.
 - `calibration_profile_card`: a JSON/Markdown confidence-calibration gate generated by the user workflow from `configs/calibration/sciimpact-qwen32b-heldout-p50.json`. It records calibration sample size, ECE/MCE/Brier score, `compatible_models`, `calibration_model_identity_match`, and whether calibrated confidence can support report-facing confidence fields. Missing, weak, or mismatched calibration evidence downgrades the user run to exploratory use.
 
-`impact_index_v3` is still dataset-local. It should not be described as global scientific impact unless the input corpus itself is a calibrated global citation/adoption graph.
-`final_impact_score` is the credibility-adjusted score used for sorting and reporting. It applies a conservative discount to model-only or weak-evidence rows while keeping `impact_index_v3` as the raw evidence-first score.
+`impact_index_v3` is still dataset-local and diagnostic. It should not be described as global scientific impact unless the input corpus itself is a calibrated global citation/adoption graph.
+`final_impact_score` is the two-category citation score used for sorting and reporting. It should be described as dataset-local impact unless the input citation data and validation labels justify a broader claim.
 
 The anomaly report includes `self_citation_risk`, with self-citation edge rate, self-citation credit share, and the top self-cited references. Project readiness warns on high self-citation concentration because it can make a ranking less reportable, but the scorer does not automatically subtract self-citation credit.
 

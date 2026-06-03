@@ -5,6 +5,7 @@ from pathlib import Path
 import random
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.judge import JudgeResult
 from local_impact_ranking.models import Paper
 from local_impact_ranking.scoring import score_influence
@@ -156,16 +157,18 @@ def export_paper_stability_csv(report: dict[str, Any], path: str | Path) -> None
         writer.writeheader()
         for row in report.get("papers", []):
             writer.writerow(
-                {
-                    "paper_id": row["paper_id"],
-                    "base_rank": row["base_rank"],
-                    "base_score": f"{float(row['base_score']):.6f}",
-                    "best_rank": row["best_rank"],
-                    "worst_rank": row["worst_rank"],
-                    "rank_span": row["rank_span"],
-                    "dropped_count": row["dropped_count"],
-                    "stability_band": row["stability_band"],
-                }
+                sanitize_csv_row(
+                    {
+                        "paper_id": row["paper_id"],
+                        "base_rank": row["base_rank"],
+                        "base_score": f"{float(row['base_score']):.6f}",
+                        "best_rank": row["best_rank"],
+                        "worst_rank": row["worst_rank"],
+                        "rank_span": row["rank_span"],
+                        "dropped_count": row["dropped_count"],
+                        "stability_band": row["stability_band"],
+                    }
+                )
             )
 
 
@@ -315,20 +318,22 @@ def export_bootstrap_paper_score_csv(report: dict[str, Any], path: str | Path) -
         writer.writeheader()
         for row in report.get("papers", []):
             writer.writerow(
-                {
-                    "paper_id": row["paper_id"],
-                    "base_rank": row["base_rank"],
-                    "base_score": f"{float(row['base_score']):.6f}",
-                    "score_mean": f"{float(row['score_mean']):.6f}",
-                    "score_ci_low": f"{float(row['score_ci_low']):.6f}",
-                    "score_ci_high": f"{float(row['score_ci_high']):.6f}",
-                    "score_ci_width": f"{float(row['score_ci_width']):.6f}",
-                    "best_rank": row["best_rank"],
-                    "worst_rank": row["worst_rank"],
-                    "rank_span": row["rank_span"],
-                    "zero_score_rate": f"{float(row['zero_score_rate']):.6f}",
-                    "uncertainty_band": row["uncertainty_band"],
-                }
+                sanitize_csv_row(
+                    {
+                        "paper_id": row["paper_id"],
+                        "base_rank": row["base_rank"],
+                        "base_score": f"{float(row['base_score']):.6f}",
+                        "score_mean": f"{float(row['score_mean']):.6f}",
+                        "score_ci_low": f"{float(row['score_ci_low']):.6f}",
+                        "score_ci_high": f"{float(row['score_ci_high']):.6f}",
+                        "score_ci_width": f"{float(row['score_ci_width']):.6f}",
+                        "best_rank": row["best_rank"],
+                        "worst_rank": row["worst_rank"],
+                        "rank_span": row["rank_span"],
+                        "zero_score_rate": f"{float(row['zero_score_rate']):.6f}",
+                        "uncertainty_band": row["uncertainty_band"],
+                    }
+                )
             )
 
 

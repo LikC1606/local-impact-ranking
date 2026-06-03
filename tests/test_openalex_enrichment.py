@@ -133,6 +133,78 @@ def test_enrich_papers_with_openalex_uses_openalex_id_and_preserves_unmatched(tm
     assert records[1]["metadata"] == {}
 
 
+def test_enrich_papers_with_openalex_can_resume_from_existing_output(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "enriched.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "paper_id": "p1",
+                        "title": "Already enriched",
+                        "doi": "10.123/already",
+                        "references": [],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "paper_id": "p2",
+                        "title": "Needs enrichment",
+                        "doi": "10.123/needs",
+                        "references": [],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Already enriched",
+                "doi": "10.123/already",
+                "references": [],
+                "citation_count": 9,
+                "metadata": {"openalex_enriched": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = OpenAlexClient(
+        {
+            "https://api.openalex.org/works/doi:10.123%2Fneeds": {
+                "id": "https://openalex.org/W2",
+                "doi": "https://doi.org/10.123/needs",
+                "cited_by_count": 12,
+            }
+        }
+    )
+
+    summary = enrich_papers_with_openalex(
+        input_path,
+        output_path,
+        client=client,
+        resume=True,
+    )
+
+    records = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert summary["resumed_count"] == 1
+    assert summary["matched_count"] == 1
+    assert len(client.requests) == 1
+    assert client.requests[0]["url"].endswith("doi:10.123%2Fneeds")
+    assert [record["paper_id"] for record in records] == ["p1", "p2"]
+    assert records[0]["citation_count"] == 9
+    assert records[1]["citation_count"] == 12.0
+
+
 def test_enrich_papers_with_openalex_falls_back_to_high_confidence_title_search(
     tmp_path,
 ):

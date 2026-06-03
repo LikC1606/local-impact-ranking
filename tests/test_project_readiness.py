@@ -77,6 +77,18 @@ def _write_minimal_reportable_run(run_dir):
         },
     )
     _write_json(
+        run_dir / "reports" / "citation_completeness_audit.json",
+        {
+            "summary": {
+                "citation_evidence_coverage": 0.9,
+                "multi_source_coverage": 0.7,
+                "papers_without_query_ids": 1,
+                "papers_with_source_conflict": 2,
+                "papers_with_confirmed_multi_source_zero": 3,
+            }
+        },
+    )
+    _write_json(
         run_dir / "reports" / "proxy_evaluation.json",
         {
             "selected_references": 20,
@@ -271,6 +283,9 @@ def test_project_readiness_report_marks_reportable_run(tmp_path):
     assert report["quality"]["gold_baseline_comparison"]["judge_beats_all_baselines"] is True
     assert report["quality"]["external_evidence"]["status"] == "ready_for_high_credibility_scoring"
     assert report["quality"]["external_evidence"]["can_claim_high_credibility"] is True
+    assert report["quality"]["citation_completeness"]["citation_evidence_coverage"] == 0.9
+    assert report["quality"]["citation_completeness"]["multi_source_coverage"] == 0.7
+    assert report["quality"]["citation_completeness"]["papers_with_source_conflict"] == 2
     assert report["quality"]["impact_validity"]["status"] == "externally_supported"
     assert report["quality"]["impact_validity"]["spearman_correlation"] == 0.52
     assert report["quality"]["impact_validity"]["significant_vs_random"] is True
@@ -290,6 +305,8 @@ def test_project_readiness_report_marks_reportable_run(tmp_path):
     assert report["evidence_files"]["gold_baseline_comparison"] == "reports/gold_baseline_comparison.json"
     assert report["evidence_files"]["external_evidence_readiness"] == "reports/external_evidence_readiness.json"
     assert report["evidence_files"]["external_evidence_paper_coverage"] == "reports/external_evidence_paper_coverage.csv"
+    assert report["evidence_files"]["citation_completeness_audit"] == "reports/citation_completeness_audit.json"
+    assert report["evidence_files"]["citation_completeness_papers"] == "reports/citation_completeness_papers.csv"
     assert report["evidence_files"]["impact_validity_evaluation"] == "reports/impact_validity_evaluation.json"
     assert report["evidence_files"]["citation_cutoff_audit"] == "reports/citation_cutoff_audit.json"
 
@@ -623,6 +640,9 @@ def test_render_project_readiness_markdown_contains_decision_and_claim_boundary(
     assert "## Quality Signals" in markdown
     assert "| evidence_level | gold_validated |" in markdown
     assert "| external_evidence_status | ready_for_high_credibility_scoring |" in markdown
+    assert "| citation_evidence_coverage | 0.900 |" in markdown
+    assert "| citation_multi_source_coverage | 0.700 |" in markdown
+    assert "| citation_source_conflict_count | 2 |" in markdown
     assert "| impact_validity_status | externally_supported |" in markdown
     assert "| impact_validity_match_rate | 1.000 |" in markdown
     assert "| impact_validity_significant_vs_random | yes |" in markdown
@@ -635,4 +655,5 @@ def test_render_project_readiness_markdown_contains_decision_and_claim_boundary(
     assert "| judge_model | local-impact-judge |" in markdown
     assert "## Evidence Files" in markdown
     assert "| external_evidence_paper_coverage | `reports/external_evidence_paper_coverage.csv` |" in markdown
+    assert "| citation_completeness_audit | `reports/citation_completeness_audit.json` |" in markdown
     assert "| citation_cutoff_audit | `reports/citation_cutoff_audit.json` |" in markdown

@@ -343,6 +343,46 @@ Files:
 
 Use this when the evaluation target is a continuous or ordinal external impact label rather than pairwise winners. Examples include future-window field/year-normalized citations, BIP! impact classes, future patent or policy citations, artifact adoption counts, or a combined held-out impact target.
 
+## Current Impact Credibility
+
+Use `evaluate-current-impact-credibility` when the goal is to evaluate current impact scores, not future-impact prediction. The labels file should contain current external metrics for the same papers, for example iCite `rcr`, `citations_per_year`, `apt`, `nih_percentile`, or current external citation counts.
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-current-impact-credibility \
+  --scores runs/example/impact_scores.csv \
+  --labels runs/example/current_external_metrics.csv \
+  --label-columns rcr,citations_per_year,apt,nih_percentile,icite_citation_count \
+  --primary-label-column rcr \
+  --output runs/example/current_impact_credibility
+```
+
+The command writes:
+
+- `current_impact_credibility.json`
+- `current_impact_credibility.md`
+
+The report checks three things:
+
+- coverage: true citation coverage, effective citation coverage, and score-label ID match rate;
+- current external alignment: Spearman, Kendall tau-b, pairwise accuracy, and NDCG@K against current metrics;
+- primary metric gate: high credibility must pass the preselected primary label, usually `rcr` or another field-normalized current-impact metric for life-science data; secondary labels only provide corroborating evidence;
+- weight sensitivity: rank stability between `final_impact_score` and the `score_*_true_*_effective` sensitivity fields.
+
+The output status is `high_credibility`, `moderate_credibility`, `not_credible`, or a lower-disclosure state depending on these checks. This report supports the claim that scores are credible current-impact estimates for the supplied dataset; it does not claim future predictive accuracy.
+
+For a public, high-credibility life-science benchmark, use NIH iCite/RCR:
+
+```bash
+PYTHONPATH=src python -m local_impact_ranking.cli evaluate-icite-current-benchmark \
+  --papers papers.jsonl \
+  --scores runs/example/impact_scores.csv \
+  --output runs/example/icite_public_benchmark \
+  --bootstrap-samples 1000 \
+  --permutation-samples 1000
+```
+
+The command fetches iCite records by PMID, writes `icite_current_metrics.csv`, then evaluates the local `final_impact_score` against NIH iCite current metrics. It uses `rcr` as the primary public benchmark label and keeps `citations_per_year`, `apt`, `nih_percentile`, and `icite_citation_count` as corroborating labels. This benchmark is appropriate for PubMed-indexed biomedical papers; low PMID coverage should be reported as a credibility limitation rather than hidden.
+
 `apply-citation-cutoff` prevents time leakage in historical backtests. It removes citation-history years after the cutoff and rewrites citation totals in the scoring input. `audit-citation-cutoff` writes `citation_cutoff_audit.json/md` and fails the audit when any citation-history year is greater than the cutoff. Put those files under the run's `reports/` directory so `project-readiness` and `report-bundle` can carry the leakage-safety evidence. When `impact_validity_evaluation.json` exists, missing cutoff audit evidence becomes a readiness warning and a failed cutoff audit becomes a blocking condition. The intended workflow is to score the cutoff dataset, then evaluate the resulting scores against a later window generated from the uncropped enriched dataset.
 
 `derive-future-impact-labels` is a convenience command for OpenAlex-enriched data. It reads `metadata.citation_counts_by_year`, `metadata.citations_by_year`, `metadata.yearly_citation_counts`, or compatible top-level fields and writes `future_impact_labels.jsonl`, `future_impact_labels.csv`, and `future_impact_labels_manifest.json`. This is useful for historical backtesting: score papers using evidence available up to a cutoff, then validate against citation counts in a later window. For mixed-field or mixed-year datasets, prefer `field_year_percentile` via `--normalization field-year-percentile` or `--label-normalization field-year-percentile`; the raw future count is preserved as `future_impact_raw`, while `future_impact` is normalized inside each field/year group.

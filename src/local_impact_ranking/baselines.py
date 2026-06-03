@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.models import Paper
 
 
@@ -259,4 +260,8 @@ def _write_score_table(path: Path, scores: dict[str, float]) -> None:
         writer = csv.DictWriter(handle, fieldnames=["rank", "id", "score"])
         writer.writeheader()
         for rank, (identifier, score) in enumerate(rows, start=1):
-            writer.writerow({"rank": rank, "id": identifier, "score": f"{score:.6f}"})
+            writer.writerow(
+                sanitize_csv_row(
+                    {"rank": rank, "id": identifier, "score": f"{score:.6f}"}
+                )
+            )

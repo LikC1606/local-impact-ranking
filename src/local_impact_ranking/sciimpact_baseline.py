@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.io import load_papers_jsonl
 
 
@@ -121,15 +122,17 @@ def write_sciimpact_text_baseline_rankings(
         writer.writeheader()
         for rank, row in enumerate(rows, start=1):
             writer.writerow(
-                {
-                    "rank": rank,
-                    "id": row["id"],
-                    "score": f"{float(row['score']):.6f}",
-                    "final_score": f"{float(row['final_score']):.6f}",
-                    "baseline_name": row["baseline_name"],
-                    "item_type": row["item_type"],
-                    "impact_dimension": row["impact_dimension"],
-                }
+                sanitize_csv_row(
+                    {
+                        "rank": rank,
+                        "id": row["id"],
+                        "score": f"{float(row['score']):.6f}",
+                        "final_score": f"{float(row['final_score']):.6f}",
+                        "baseline_name": row["baseline_name"],
+                        "item_type": row["item_type"],
+                        "impact_dimension": row["impact_dimension"],
+                    }
+                )
             )
 
     manifest = {

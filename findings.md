@@ -1,5 +1,36 @@
 # Findings
 
+## 2026-06-03 Extra Citation Source Finding
+
+- Added two more credentialless biomedical citation sources to the user-data pipeline: Europe PMC and NCBI ELink PubMed cited-in.
+- Europe PMC matched 85/85 curated user papers and fixed an important identifier problem: several records had numeric local `paper_id` values that looked like PMIDs but were not true PMIDs. Europe PMC DOI matching recovered real PMIDs such as `17555991` for `42030147` and `32058000` for `42169456`.
+- iCite after Europe PMC recovered life-science evidence for several DOI/PMID-linked records, but later title-identity auditing showed that some of those external IDs belonged to cited references rather than the local target paper.
+- NCBI PubMed cited-in now uses repeated `id` parameters and small chunks, preventing NCBI ELink from returning one merged multi-ID linkset and assigning the total to the wrong paper. In the inspected records, `42030147` has NCBI PubMed cited-in `248`, `42169456` has `34`, and `42032168` has `0`.
+- The final replay with extra sources is at `runs/data-100-verification/user-impact-model-p200-extra-sources-replay/model-impact`.
+- Manual spot checks exposed a more important issue: some external DOI/PMID values were attached to references inside the PDF, not to the target article. The final scoring now blocks those external citation counts when the external title is clearly inconsistent with the local title.
+- Final true-citation nonzero count is 3/85 after identity guarding and recovery. The recovery command found 3 title mismatches, recovered 2 by high-confidence local-title OpenAlex search, and left 1 unresolved extract-only row.
+- Identity-recovery examples:
+  - `42030147`: the previous external title was `Initial T cell receptor transgenic cell precursor frequency dictates critical aspects of the CD8(+) T cell response to infection.` rather than local title `Design principles of the cytotoxic CD8+ T cell response`; wrong DOI/PMID evidence is quarantined and the final score is 0.
+  - `42169456`: the previous external title was `TbCAPs: A toolbox for co-activation pattern analysis.` rather than local title `Resting-State Coactivation Patterns of Language Reorganization in Brain Tumors`; wrong DOI/PMID evidence is quarantined and the final score is 0.
+  - `42124699`: local title `Main Text Results & Discussion` remains unresolved because it is an extraction artifact; it is scored as 0 and retained only for audit.
+- The current top true-citation papers after recovery are `42125479` (`24`, OpenCitations), `42032168` (`6`, Crossref), and `42108843` (`1`, Semantic Scholar). The remaining 81 matched rows and the 1 unresolved row are zero across trusted/matched open citation sources.
+- Manual zero-citation audit sampled 13 zero-score rows, including 2020/2024/2025/2026 records and the 2 recovered wrong-identity cases. OpenAlex, Crossref, Semantic Scholar, and Europe PMC all returned 0 citations for the matched DOI-indexed samples, with only the recovered Zenodo DOI missing from Crossref/Semantic Scholar. The audit report is `runs/data-100-verification/manual-zero-citation-audit.md`.
+
+## 2026-06-03 User 100-Paper Dataset Verification Finding
+
+- `/home/wyx/zh/local-impact-ranking/data_100.zip` is usable after curation, but it is not a high-credibility validation dataset by itself.
+- The MinerU conversion produced 100 records; after excluding supplements and extraction artifacts, the curated article set contains 85 papers.
+- OpenAlex repaired 3 clearly bad extracted titles. The curated dataset still has 3820 references, including 1522 reference DOIs.
+- DOI matching found 2 self DOI matches and 0 cross-paper internal DOI matches. This explains why effective/internal citation evidence remains zero: the papers do not cite each other inside this 85-paper corpus.
+- External evidence coverage is strong enough for disclosed current-impact scoring: DOI coverage `0.929`, citation-count coverage `0.929`, yearly citation-history coverage `0.918`, and field/year percentile coverage `0.859`.
+- The score distribution is dominated by paper age and current citation sparsity: only 3 papers have nonzero final citation-impact scores, while 82 have zero final scores. This is expected for mostly 2026 papers, not a scoring-runtime failure.
+- The claim certificate is `evidence_supported` with confidence `0.25`: reportable as dataset-local current citation impact with disclosure, but not validated/high-credibility impact accuracy without future-window labels, internal citation edges, or an external calibrated benchmark label for these papers.
+- A model-backed p200 run with `local-impact-judge-source-task-dpo` is now available at `runs/data-100-verification/user-impact-model-p200`.
+- The p200 pairwise graph is reportable: 200 planned comparisons, all 85 papers covered, one connected component, and at least 4 comparisons per paper. The model produced 200 judgments with 190 parseable outputs.
+- The local model contributes a useful diagnostic/model-supported signal, but it does not change the final reportable score boundary. The final score remains `0.95 true citation + 0.05 effective citation`; because effective/internal citation evidence is zero and true current citations are sparse, only 3 final scores are nonzero.
+- Model evidence is only moderate credibility: the supplied model profile has pooled SciImpact accuracy `0.658889`, weak slices, and `can_claim_high_model_credibility=false`. Therefore model-assisted fields should be disclosed as auxiliary evidence, not used as a high-credibility standalone impact score.
+- Stability is mixed: final citation score top-20 retention is `1.0`, but pairwise model-ranking top-20 retention is `0.80375` with 32 unstable papers. This reinforces the decision to keep the final score citation-dominant for current-impact reporting.
+
 ## Project State
 
 - Existing design docs already define the intended MVP scope: dataset-local content-aware impact ranking, not global scientific impact.
@@ -153,6 +184,24 @@
 - The demo output is intentionally honest: it can show dataset-local evidence-supported scores, but the small four-paper validation fixture remains `insufficient_validation_data`, so the claim certificate does not overclaim validated impact accuracy.
 - This is a better product artifact than another weak-slice adapter because it makes the scoring system inspectable and immediately usable with the user's eventual data.
 
+## 2026-06-02 OpCitance + iCite Current-Impact Finding
+
+- A 1000-paper public biomedical benchmark was built from OpCitance citation contexts and NIH iCite labels:
+  - `runs/opcitance-icite-current-expanded/opcitance_icite_papers.jsonl`
+  - `runs/opcitance-icite-current-expanded/impact_scores.csv`
+  - `runs/opcitance-icite-current-expanded/icite_current_metrics.csv`
+  - `runs/opcitance-icite-current-expanded/opcitance_icite_benchmark_summary.md`
+- Coverage is strong enough for a current-impact check: 1000 scored papers, 998 RCR labels, 1224 internal reference edges, 5442 citation contexts, and effective-citation coverage `0.713`.
+- The expanded benchmark shows the most defensible current-impact score is citation-dominant:
+  - `score_100_true_00_effective` vs RCR: Spearman `0.987`, pairwise accuracy `0.952`.
+  - `score_95_true_05_effective` / new `final_impact_score` vs RCR: Spearman `0.985`, pairwise accuracy `0.948`.
+  - `score_80_true_20_effective` vs RCR: Spearman `0.961`, pairwise accuracy `0.912`.
+  - `score_50_true_50_effective` vs RCR: Spearman `0.816`, pairwise accuracy `0.818`.
+  - `effective_citation_score` alone vs RCR: Spearman `0.482`, pairwise accuracy `0.564`.
+- Conclusion: effective citation is useful as an explanation/context adjustment and sensitivity signal, but public iCite validation does not support giving it a large default weight for current impact. The final score was therefore changed to `0.95 * true_citation_score + 0.05 * effective_citation_score`.
+- The final 95/5 score is high-credibility on current iCite metrics: RCR Spearman `0.985`, citations/year `0.975`, APT `0.830`, NIH percentile `0.985`, and iCite citation count `0.999`.
+- This benchmark is now part of the formal benchmark plan as a reproducible, no-private-data current-impact check. It is appropriate for validating the project's current-impact score in life-science/PubMed-like data, but it should not be presented as a future-impact or all-field social-impact benchmark.
+
 ## Verification History
 
 - `PYTHONPATH=src pytest -q` reported `76 passed`.
@@ -288,3 +337,21 @@
   - Strong SFT: direct `0.673`, selected `0.710`, consistency `0.730`.
   - Strong SFT+DPO: direct `0.670`, selected `0.713`, consistency `0.730`.
 - Decision: do not promote the strong SFT/DPO route. It has a small selected-accuracy gain on seed23, but direct accuracy and A/B consistency regress. That violates the project gate requiring no average direct-accuracy drop and stable position consistency before replacing the default. Three-seed expansion is not justified unless a future variant fixes those regressions.
+
+## 2026-06-03 Multi-Source Citation Resolution Finding
+
+- The previous true-citation resolver used fixed source priority. In the user 85-paper dataset, that meant an OpenAlex value of `0` could override nonzero evidence from Semantic Scholar, NIH iCite, OpenCitations, or Crossref.
+- A multi-source audit initially found 5 papers with at least one nonzero open citation source:
+  - `42030147`: OpenAlex `410`, OpenCitations `363`, Crossref `334`, Semantic Scholar `493`.
+  - `42169456`: OpenAlex `3`, OpenCitations `61`, Crossref `75`, Semantic Scholar `64`.
+  - `42125479`: OpenAlex/Semantic Scholar/iCite `0`, OpenCitations `24`.
+  - `42032168`: OpenAlex `5`, OpenCitations `2`, Crossref `6`.
+  - `42108843`: OpenAlex/OpenCitations/Crossref `0`, Semantic Scholar/iCite `1`.
+- Implemented current-impact true citation policy: collect all named open-source counts, select the maximum non-null count for scoring, and retain source-specific raw values plus conflict diagnostics for audit.
+- `supplied_citation_count` is no longer double-counted when it only repeats a named source; it is used when no named source is available or when it is higher than all named source counts.
+- Replayed the 200 saved model judgments without GPU using the merged input:
+  - Output: `runs/data-100-verification/user-impact-model-p200-multisource-replay/model-impact`.
+  - Initial `true_nonzero=5`, `all_zero=80`, `source_conflict_flag=True` for all 5 nonzero papers because at least one source disagrees sharply or returns zero.
+  - Rank changes from old to new: `42125479` moves `40 -> 3`; `42108843` moves `29 -> 5`; `42169456` moves `3 -> 2`.
+- Follow-up manual spot checks showed that `42030147` and `42169456` were false positives caused by external identity mismatch. After identity recovery, the final replay has `true_nonzero=3`, 84 matched rows, and 1 unresolved extract-only row (`42124699`).
+- Claim boundary is unchanged: the system now has better open-source citation evidence and auditability, but the user dataset still lacks external/future-window ground-truth labels and internal/effective citation edges, so it cannot claim validated high-credibility impact accuracy.

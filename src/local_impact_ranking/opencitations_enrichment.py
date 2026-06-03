@@ -8,13 +8,19 @@ from urllib.parse import quote
 
 import httpx
 
+from local_impact_ranking.enrichment_resume import (
+    resume_rows_by_paper_id,
+    write_jsonl_atomic,
+)
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import Paper
+from local_impact_ranking.normalize import normalize_doi
 from local_impact_ranking.openalex_enrichment import paper_doi
 
 
 OPENCITATIONS_INDEX_URL = "https://api.opencitations.net/index/v2"
 DOI_PID_RE = re.compile(r"\bdoi:([^\s;]+)", re.IGNORECASE)
+DEFAULT_MAX_INCOMING_EDGES_PER_PAPER = 500
 
 
 def enrich_papers_with_opencitations(
@@ -24,10 +30,16 @@ def enrich_papers_with_opencitations(
     token: str | None = None,
     timeout: float = 30.0,
     include_edges: bool = True,
+    max_incoming_edges_per_paper: int = DEFAULT_MAX_INCOMING_EDGES_PER_PAPER,
     materialize_internal_edges: bool = False,
+    resume: bool = False,
     client: Any | None = None,
 ) -> dict[str, Any]:
+    if max_incoming_edges_per_paper < 0:
+        raise ValueError("max_incoming_edges_per_paper must be at least 0")
     papers = load_papers_jsonl(input_path)
+    destination = Path(output_path)
+    resumed_rows = resume_rows_by_paper_id(destination) if resume else {}
     doi_to_paper_id = _doi_to_paper_id(papers)
     paper_lookup = {paper.paper_id: paper for paper in papers}
     owns_client = client is None
@@ -41,15 +53,39 @@ def enrich_papers_with_opencitations(
         "queryable_count": 0,
         "internal_incoming_edge_count": 0,
         "external_incoming_edge_count": 0,
+        "stored_incoming_edge_count": 0,
+        "truncated_incoming_edge_count": 0,
+        "papers_with_truncated_incoming_edges": 0,
         "materialized_internal_edge_count": 0,
         "source": "opencitations",
         "api": "index/v2",
         "include_edges": include_edges,
+        "max_incoming_edges_per_paper": max_incoming_edges_per_paper,
         "materialize_internal_edges": materialize_internal_edges,
+        "resume": resume,
+        "resumed_count": 0,
     }
 
     try:
         for paper in papers:
+            resumed_row = resumed_rows.get(paper.paper_id)
+            if resumed_row is not None:
+                rows.append(resumed_row)
+                summary["resumed_count"] += 1
+                if materialize_internal_edges:
+                    for edge in _stored_opencitations_incoming_edges(resumed_row):
+                        reference = _materialized_reference(
+                            edge,
+                            paper_lookup=paper_lookup,
+                        )
+                        if reference is None:
+                            continue
+                        pending_materialized_edges.setdefault(
+                            edge["source_paper_id"],
+                            [],
+                        ).append(reference)
+                        summary["materialized_internal_edge_count"] += 1
+                continue
             record = paper.model_dump(mode="json", exclude_none=True)
             doi = paper_doi(paper)
             if not doi:
@@ -76,7 +112,8 @@ def enrich_papers_with_opencitations(
                 summary["unmatched_count"] += 1
                 continue
 
-            incoming_edges = []
+            stored_incoming_edges = []
+            truncated_count = 0
             if include_edges:
                 citation_rows = _fetch_citation_rows(
                     http_client,
@@ -95,6 +132,14 @@ def enrich_papers_with_opencitations(
                     len(citation_rows) - len(incoming_edges),
                     0,
                 )
+                stored_incoming_edges = incoming_edges[
+                    :max_incoming_edges_per_paper
+                ]
+                summary["stored_incoming_edge_count"] += len(stored_incoming_edges)
+                truncated_count = len(incoming_edges) - len(stored_incoming_edges)
+                if truncated_count > 0:
+                    summary["truncated_incoming_edge_count"] += truncated_count
+                    summary["papers_with_truncated_incoming_edges"] += 1
                 if materialize_internal_edges:
                     for edge in incoming_edges:
                         reference = _materialized_reference(
@@ -115,7 +160,8 @@ def enrich_papers_with_opencitations(
                     doi=normalized_doi,
                     citation_count=citation_count,
                     reference_count=reference_count,
-                    incoming_edges=incoming_edges,
+                    incoming_edges=stored_incoming_edges,
+                    truncated_incoming_edge_count=truncated_count,
                 )
             )
             summary["matched_count"] += 1
@@ -132,11 +178,7 @@ def enrich_papers_with_opencitations(
             for row in rows
         ]
 
-    destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl_atomic(destination, rows)
     summary["output_path"] = str(destination)
     return summary
 
@@ -196,6 +238,7 @@ def _merge_opencitations_evidence(
     citation_count: float | None,
     reference_count: float | None,
     incoming_edges: list[dict[str, Any]],
+    truncated_incoming_edge_count: int,
 ) -> dict[str, Any]:
     metadata = dict(record.get("metadata") or {})
     external_ids = dict(metadata.get("external_ids") or {})
@@ -213,8 +256,22 @@ def _merge_opencitations_evidence(
     metadata["opencitations_enriched"] = True
     if incoming_edges:
         metadata["opencitations_incoming_edges"] = incoming_edges
+    if truncated_incoming_edge_count > 0:
+        metadata["opencitations_incoming_edges_truncated_count"] = (
+            truncated_incoming_edge_count
+        )
     record["metadata"] = metadata
     return record
+
+
+def _stored_opencitations_incoming_edges(row: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = row.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    edges = metadata.get("opencitations_incoming_edges")
+    if not isinstance(edges, list):
+        return []
+    return [edge for edge in edges if isinstance(edge, dict)]
 
 
 def _internal_incoming_edges(
@@ -317,12 +374,7 @@ def _first_doi(value: Any) -> str | None:
 
 
 def _normalize_doi(value: str) -> str:
-    normalized = value.strip()
-    if normalized.startswith("https://doi.org/"):
-        normalized = normalized.removeprefix("https://doi.org/")
-    if normalized.startswith("doi:"):
-        normalized = normalized.removeprefix("doi:")
-    return normalized.lower()
+    return normalize_doi(value).lower()
 
 
 def _yes_no(value: Any) -> bool | None:

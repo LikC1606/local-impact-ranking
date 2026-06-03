@@ -22,6 +22,9 @@ def test_write_report_bundle_copies_report_ready_artifacts_and_manifest(tmp_path
     _write(run_dir / "reports" / "project_readiness.md", "# Project Readiness\n")
     _write(run_dir / "reports" / "external_evidence_readiness.md", "# External Evidence Readiness\n")
     _write(run_dir / "reports" / "external_evidence_paper_coverage.csv", "paper_id,missing_evidence\np1,\n")
+    _write(run_dir / "reports" / "citation_completeness_audit.md", "# Citation Completeness Audit\n")
+    _write(run_dir / "reports" / "citation_completeness_audit.json", '{"summary":{"paper_count":1}}\n')
+    _write(run_dir / "reports" / "citation_completeness_papers.csv", "paper_id,completeness_grade\np1,multi_source_compatible\n")
     _write(run_dir / "reports" / "impact_validity_evaluation.md", "# Impact Validity Evaluation\n")
     _write(run_dir / "reports" / "impact_credibility_scorecard.md", "# Impact Credibility Scorecard\n")
     _write(run_dir / "reports" / "citation_cutoff_audit.md", "# Citation Cutoff Audit\n")
@@ -80,6 +83,9 @@ def test_write_report_bundle_copies_report_ready_artifacts_and_manifest(tmp_path
     assert (output_dir / "reports" / "project_readiness.md").exists()
     assert (output_dir / "reports" / "external_evidence_readiness.md").exists()
     assert (output_dir / "reports" / "external_evidence_paper_coverage.csv").exists()
+    assert (output_dir / "reports" / "citation_completeness_audit.md").exists()
+    assert (output_dir / "reports" / "citation_completeness_audit.json").exists()
+    assert (output_dir / "reports" / "citation_completeness_papers.csv").exists()
     assert (output_dir / "reports" / "impact_validity_evaluation.md").exists()
     assert (output_dir / "reports" / "impact_credibility_scorecard.md").exists()
     assert (output_dir / "reports" / "citation_cutoff_audit.md").exists()
@@ -90,6 +96,9 @@ def test_write_report_bundle_copies_report_ready_artifacts_and_manifest(tmp_path
     assert "reports/project_readiness.json" in manifest["copied_files"]
     assert "reports/external_evidence_readiness.md" in manifest["copied_files"]
     assert "reports/external_evidence_paper_coverage.csv" in manifest["copied_files"]
+    assert "reports/citation_completeness_audit.md" in manifest["copied_files"]
+    assert "reports/citation_completeness_audit.json" in manifest["copied_files"]
+    assert "reports/citation_completeness_papers.csv" in manifest["copied_files"]
     assert "reports/impact_validity_evaluation.md" in manifest["copied_files"]
     assert "reports/impact_credibility_scorecard.md" in manifest["copied_files"]
     assert "reports/citation_cutoff_audit.md" in manifest["copied_files"]

@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from local_impact_ranking.csv_safety import sanitize_csv_row
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import Paper
 from local_impact_ranking.normalize import normalize_paper
@@ -198,10 +199,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], *, label_column: str) -> 
         writer.writeheader()
         for row in rows:
             writer.writerow(
-                {
-                    field: row.get(field)
-                    for field in fieldnames
-                }
+                sanitize_csv_row({field: row.get(field) for field in fieldnames})
             )
 
 
