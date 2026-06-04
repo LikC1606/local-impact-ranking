@@ -77,7 +77,7 @@ def prompt_sha256(prompt: str) -> str:
 
 def parse_citation_role_output(raw_output: str) -> dict[str, Any]:
     try:
-        payload = json.loads(_extract_json_object(raw_output))
+        payload = json.loads(raw_output.strip())
     except json.JSONDecodeError:
         return _unknown_parse_result(
             "invalid_json",
@@ -112,18 +112,6 @@ def _unknown_parse_result(validation_status: str, rationale: str) -> dict[str, A
         "rationale": rationale,
         "validation_status": validation_status,
     }
-
-
-def _extract_json_object(text: str) -> str:
-    stripped = text.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start >= 0 and end > start:
-        return stripped[start : end + 1]
-    return stripped
-
 
 def _clamp_confidence(value: Any) -> float | None:
     try:

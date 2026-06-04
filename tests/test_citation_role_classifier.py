@@ -124,6 +124,17 @@ def test_parse_citation_role_output_invalid_json_becomes_unknown():
     assert "raw output was not valid JSON" in parsed["rationale"]
 
 
+def test_parse_citation_role_output_rejects_embedded_json():
+    parsed = parse_citation_role_output(
+        'prefix {"role":"method","confidence":0.5,"rationale":"ok"} suffix'
+    )
+
+    assert parsed["role"] == "unknown"
+    assert parsed["confidence"] == 0.0
+    assert parsed["validation_status"] == "invalid_json"
+    assert "raw output was not valid JSON" in parsed["rationale"]
+
+
 def test_parse_citation_role_output_non_object_json_becomes_unknown():
     for raw_output in ("[]", "null", '"text"'):
         parsed = parse_citation_role_output(raw_output)
