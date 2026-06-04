@@ -37,7 +37,7 @@ def build_citation_role_prompt(
     paper: Paper,
     context: CitationContext,
     *,
-    context_index: int,
+    context_index: int = 0,
 ) -> str:
     reference_title = _reference_title(paper, context.reference_id)
     source_hint = _source_role_hint(context)

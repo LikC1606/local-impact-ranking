@@ -38,6 +38,26 @@ def test_build_citation_role_prompt_contains_fixed_role_schema():
     assert "Protocol paper" in prompt
 
 
+def test_build_citation_role_prompt_defaults_context_index_to_zero():
+    paper = Paper.model_validate(
+        {
+            "paper_id": "p1",
+            "title": "Citing paper",
+            "references": [{"reference_id": "r1", "title": "Protocol paper"}],
+            "citation_contexts": [
+                {
+                    "reference_id": "r1",
+                    "sentence": "We used this protocol for the assay.",
+                }
+            ],
+        }
+    )
+
+    prompt = build_citation_role_prompt(paper, paper.citation_contexts[0])
+
+    assert "Context index: 0" in prompt
+
+
 def test_parse_citation_role_output_accepts_valid_role():
     parsed = parse_citation_role_output(
         json.dumps(
