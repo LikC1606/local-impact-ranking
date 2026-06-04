@@ -171,3 +171,16 @@ def test_parse_citation_role_output_non_numeric_confidence_becomes_unknown():
     assert parsed["role"] == "unknown"
     assert parsed["confidence"] == 0.0
     assert parsed["validation_status"] == "invalid_confidence"
+
+
+def test_parse_citation_role_output_rejects_bool_and_string_confidence():
+    for confidence in (True, "0.5"):
+        parsed = parse_citation_role_output(
+            json.dumps(
+                {"role": "method", "confidence": confidence, "rationale": "bad"}
+            )
+        )
+
+        assert parsed["role"] == "unknown"
+        assert parsed["confidence"] == 0.0
+        assert parsed["validation_status"] == "invalid_confidence"

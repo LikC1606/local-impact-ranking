@@ -114,6 +114,8 @@ def _unknown_parse_result(validation_status: str, rationale: str) -> dict[str, A
     }
 
 def _clamp_confidence(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
