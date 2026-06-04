@@ -2343,6 +2343,8 @@ def _explicit_context_role(context: CitationContext) -> str | None:
             break
     if not value:
         return None
+    if value in EFFECTIVE_CITATION_ROLE_WEIGHTS:
+        return value
     if value in {"method", "methods", "uses", "extends", "reuse"}:
         return "method"
     if value in {"result", "results", "supporting", "support"}:

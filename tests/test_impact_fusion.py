@@ -1349,6 +1349,82 @@ def test_model_unknown_role_does_not_fall_back_to_keyword_rules():
     assert row["effective_citation_raw"] == 0.1
 
 
+def test_model_canonical_roles_are_honored_without_keyword_fallback():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "dataset",
+                "title": "Reusable dataset paper",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "contrast",
+                "title": "Contrasting result paper",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "dataset_citing",
+                "title": "Paper citing a cached dataset role",
+                "references": [
+                    {"reference_id": "dataset", "title": "Reusable dataset paper"}
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "dataset",
+                        "sentence": "This prior work is cited here.",
+                        "section": "Related Work",
+                        "role": "dataset_or_tool",
+                        "role_source": "model",
+                    }
+                ],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "contrast_citing",
+                "title": "Paper citing a cached contrasting role",
+                "references": [
+                    {"reference_id": "contrast", "title": "Contrasting result paper"}
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "contrast",
+                        "sentence": "This prior work is cited here.",
+                        "section": "Related Work",
+                        "role": "negative_or_contrasting",
+                        "role_source": "model",
+                    }
+                ],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    by_id = {row["paper_id"]: row for row in result["rankings"]}
+
+    assert by_id["dataset"]["effective_citation_dataset_or_tool_count"] == 1
+    assert by_id["dataset"]["effective_citation_unknown_count"] == 0
+    assert by_id["dataset"]["effective_citation_raw"] == 1.5
+    assert by_id["contrast"]["effective_citation_negative_count"] == 1
+    assert by_id["contrast"]["effective_citation_unknown_count"] == 0
+    assert by_id["contrast"]["effective_citation_raw"] == 1.1
+
+
 def test_compute_impact_index_counts_cross_source_duplicate_edge_once():
     papers = [
         Paper.model_validate(
