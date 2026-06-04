@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 from local_impact_ranking.models import CitationContext, Paper
@@ -41,6 +42,19 @@ def build_citation_role_prompt(
 ) -> str:
     reference_title = _reference_title(paper, context.reference_id)
     source_hint = _source_role_hint(context)
+    citation_data = {
+        "citing_paper_id": paper.paper_id,
+        "citing_title": paper.title,
+        "citing_abstract": paper.abstract or "",
+        "context_index": context_index,
+        "reference_id": context.reference_id,
+        "reference_title": reference_title,
+        "section": context.section or "",
+        "sentence": context.sentence,
+        "paragraph": context.paragraph or "",
+        "source_role_hint_non_authoritative": source_hint or "",
+    }
+    citation_data_json = json.dumps(citation_data, ensure_ascii=False, indent=2)
     role_lines = "\n".join(
         f"- {role}: {ROLE_DESCRIPTIONS[role]}" for role in ALLOWED_CITATION_ROLES
     )
@@ -49,16 +63,8 @@ def build_citation_role_prompt(
         "Return JSON only. Choose exactly one role from the allowed list. "
         "Do not invent roles. If the sentence is insufficient, choose unknown.\n\n"
         f"Prompt version: {MODEL_CITATION_ROLE_PROMPT_VERSION}\n"
-        f"Citing paper ID: {paper.paper_id}\n"
-        f"Citing title: {paper.title}\n"
-        f"Citing abstract: {paper.abstract or ''}\n"
         f"Context index: {context_index}\n"
-        f"Reference ID: {context.reference_id}\n"
-        f"Reference title: {reference_title}\n"
-        f"Section: {context.section or ''}\n"
-        f"Sentence: {context.sentence}\n"
-        f"Paragraph: {context.paragraph or ''}\n"
-        f"Source role hint, non-authoritative: {source_hint or ''}\n\n"
+        f"Citation data:\n{citation_data_json}\n\n"
         f"Allowed roles:\n{role_lines}\n\n"
         "Return this JSON shape exactly: "
         '{"role":"method","confidence":0.0,"rationale":"short reason"}'
@@ -73,25 +79,38 @@ def parse_citation_role_output(raw_output: str) -> dict[str, Any]:
     try:
         payload = json.loads(_extract_json_object(raw_output))
     except json.JSONDecodeError:
-        return {
-            "role": "unknown",
-            "confidence": 0.0,
-            "rationale": "The raw output was not valid JSON.",
-            "validation_status": "invalid_json",
-        }
+        return _unknown_parse_result(
+            "invalid_json",
+            "The raw output was not valid JSON.",
+        )
+    if not isinstance(payload, dict):
+        return _unknown_parse_result(
+            "invalid_schema",
+            "The JSON output must be an object with role, confidence, and rationale.",
+        )
     role = str(payload.get("role", "")).strip().lower()
     if role not in ALLOWED_CITATION_ROLES:
-        return {
-            "role": "unknown",
-            "confidence": 0.0,
-            "rationale": f"Illegal role: {role}",
-            "validation_status": "invalid_role",
-        }
+        return _unknown_parse_result("invalid_role", f"Illegal role: {role}")
+    confidence = _clamp_confidence(payload.get("confidence"))
+    if confidence is None:
+        return _unknown_parse_result(
+            "invalid_confidence",
+            "The confidence value was not numeric.",
+        )
     return {
         "role": role,
-        "confidence": _clamp_confidence(payload.get("confidence")),
+        "confidence": confidence,
         "rationale": str(payload.get("rationale", "")),
         "validation_status": "valid",
+    }
+
+
+def _unknown_parse_result(validation_status: str, rationale: str) -> dict[str, Any]:
+    return {
+        "role": "unknown",
+        "confidence": 0.0,
+        "rationale": rationale,
+        "validation_status": validation_status,
     }
 
 
@@ -106,11 +125,13 @@ def _extract_json_object(text: str) -> str:
     return stripped
 
 
-def _clamp_confidence(value: Any) -> float:
+def _clamp_confidence(value: Any) -> float | None:
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return 0.0
+        return None
+    if not math.isfinite(number):
+        return None
     return min(1.0, max(0.0, number))
 
 
