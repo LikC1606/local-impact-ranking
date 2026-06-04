@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from local_impact_ranking.enrichment_resume import write_jsonl_atomic
 from local_impact_ranking.io import load_papers_jsonl
 from local_impact_ranking.models import CitationContext, Paper
 
@@ -308,14 +309,22 @@ def _load_role_journal(
             stripped = line.strip()
             if not stripped:
                 continue
-            record = json.loads(stripped)
-            key = _context_key(
-                str(record.get("paper_id", "")),
-                int(record.get("context_index", 0)),
-                str(record.get("reference_id", "")),
-                str(record.get("sentence", "")),
-            )
-            results[key] = record
+            try:
+                record = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            try:
+                key = _context_key(
+                    str(record.get("paper_id", "")),
+                    int(record.get("context_index", 0)),
+                    str(record.get("reference_id", "")),
+                    str(record.get("sentence", "")),
+                )
+            except (TypeError, ValueError):
+                continue
+            results[key] = _normalize_role_journal_record(record)
     return results
 
 
@@ -342,12 +351,51 @@ def _source_role_hint_from_record(record: dict[str, Any]) -> str | None:
     return None
 
 
+def _normalize_role_journal_record(record: dict[str, Any]) -> dict[str, Any]:
+    raw_role = str(record.get("role", "")).strip().lower()
+    role = raw_role if raw_role in ALLOWED_CITATION_ROLES else "unknown"
+    confidence = _coerce_journal_confidence(record.get("confidence", 0.0))
+    validation_status = _string_or_empty(record.get("validation_status")) or "valid"
+    rationale = _string_or_empty(record.get("rationale"))
+    if role == "unknown" and raw_role not in ALLOWED_CITATION_ROLES:
+        validation_status = "invalid_role"
+        if not rationale:
+            rationale = f"Illegal journal role: {raw_role}"
+    if confidence is None:
+        confidence = 0.0
+        if validation_status == "valid":
+            validation_status = "invalid_confidence"
+        if not rationale:
+            rationale = "Journal confidence was not finite numeric."
+    return {
+        "role": role,
+        "confidence": confidence,
+        "rationale": rationale,
+        "validation_status": validation_status,
+        "model": _string_or_empty(record.get("model")),
+        "prompt_sha256": _string_or_empty(record.get("prompt_sha256")),
+        "raw_output": _string_or_empty(record.get("raw_output")),
+    }
+
+
+def _coerce_journal_confidence(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(1.0, max(0.0, number))
+
+
+def _string_or_empty(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
 def _write_jsonl(path: str | Path, rows: list[dict[str, Any]]) -> None:
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl_atomic(path, rows)
 
 
 def _clamp_confidence(value: Any) -> float | None:

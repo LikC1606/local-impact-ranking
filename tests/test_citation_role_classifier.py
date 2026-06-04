@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import local_impact_ranking.citation_role_classifier as classifier_module
 from local_impact_ranking.citation_role_classifier import (
     ALLOWED_CITATION_ROLES,
     build_citation_role_prompt,
@@ -363,3 +364,169 @@ def test_classify_citation_contexts_replays_journal_without_model_call(tmp_path)
     assert context["role"] == "method"
     assert context["role_model"] == "cached-model"
     assert context["role_prompt_sha256"] == "cached-hash"
+
+
+def test_classify_citation_contexts_replays_valid_journal_before_bad_final_line(
+    tmp_path,
+):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.roles.jsonl"
+    journal_path = tmp_path / "role_journal.jsonl"
+    write_jsonl(
+        input_path,
+        [
+            {
+                "paper_id": "p1",
+                "title": "Citing paper",
+                "references": [{"reference_id": "r1", "title": "Protocol paper"}],
+                "citation_contexts": [
+                    {
+                        "reference_id": "r1",
+                        "sentence": "We used this protocol.",
+                    }
+                ],
+            }
+        ],
+    )
+    journal_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "context_index": 0,
+                "reference_id": "r1",
+                "sentence": "We used this protocol.",
+                "role": "method",
+                "confidence": 0.8,
+                "rationale": "cached",
+                "validation_status": "valid",
+                "model": "cached-model",
+                "prompt_sha256": "cached-hash",
+                "raw_output": "{}",
+            }
+        )
+        + "\n"
+        + '{"paper_id": "p2", "context_index":',
+        encoding="utf-8",
+    )
+
+    report = classify_citation_contexts(
+        input_path,
+        output_path,
+        base_url="http://localhost:8000/v1",
+        model="local-impact-role",
+        journal_path=journal_path,
+        client=FailingClient(),
+    )
+
+    context = read_jsonl(output_path)[0]["citation_contexts"][0]
+    assert report["replayed_context_count"] == 1
+    assert report["model_request_count"] == 0
+    assert context["role"] == "method"
+    assert context["role_model"] == "cached-model"
+
+
+def test_classify_citation_contexts_validates_replayed_journal_records(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.roles.jsonl"
+    journal_path = tmp_path / "role_journal.jsonl"
+    write_jsonl(
+        input_path,
+        [
+            {
+                "paper_id": "p1",
+                "title": "Citing paper",
+                "references": [{"reference_id": "r1", "title": "Protocol paper"}],
+                "citation_contexts": [
+                    {
+                        "reference_id": "r1",
+                        "sentence": "This was a claimed breakthrough.",
+                    },
+                    {
+                        "reference_id": "r1",
+                        "sentence": "We used this protocol.",
+                    },
+                ],
+            }
+        ],
+    )
+    write_jsonl(
+        journal_path,
+        [
+            {
+                "paper_id": "p1",
+                "context_index": 0,
+                "reference_id": "r1",
+                "sentence": "This was a claimed breakthrough.",
+                "role": "breakthrough",
+                "confidence": 0.4,
+            },
+            {
+                "paper_id": "p1",
+                "context_index": 1,
+                "reference_id": "r1",
+                "sentence": "We used this protocol.",
+                "role": "method",
+                "confidence": "2.5",
+            },
+        ],
+    )
+
+    report = classify_citation_contexts(
+        input_path,
+        output_path,
+        base_url="http://localhost:8000/v1",
+        model="local-impact-role",
+        journal_path=journal_path,
+        client=FailingClient(),
+    )
+
+    contexts = read_jsonl(output_path)[0]["citation_contexts"]
+    assert report["replayed_context_count"] == 2
+    assert report["model_request_count"] == 0
+    assert contexts[0]["role"] == "unknown"
+    assert contexts[0]["role_validation_status"] == "invalid_role"
+    assert contexts[0]["role_rationale"]
+    assert contexts[0]["role_model"] == ""
+    assert contexts[1]["role"] == "method"
+    assert contexts[1]["role_confidence"] == 1.0
+    assert contexts[1]["role_validation_status"] == "valid"
+    assert contexts[1]["role_rationale"] == ""
+    assert contexts[1]["role_prompt_sha256"] == ""
+
+
+def test_classify_citation_contexts_uses_atomic_jsonl_writer(tmp_path, monkeypatch):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.roles.jsonl"
+    write_jsonl(
+        input_path,
+        [
+            {
+                "paper_id": "p1",
+                "title": "Citing paper",
+                "references": [{"reference_id": "r1", "title": "Protocol paper"}],
+                "citation_contexts": [{"reference_id": "r1", "sentence": ""}],
+            }
+        ],
+    )
+    calls = []
+
+    def fake_write_jsonl_atomic(path, rows):
+        calls.append((Path(path), list(rows)))
+
+    monkeypatch.setattr(
+        classifier_module,
+        "write_jsonl_atomic",
+        fake_write_jsonl_atomic,
+    )
+
+    classify_citation_contexts(
+        input_path,
+        output_path,
+        base_url="http://localhost:8000/v1",
+        model="local-impact-role",
+        client=FailingClient(),
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == output_path
+    assert calls[0][1][0]["paper_id"] == "p1"
