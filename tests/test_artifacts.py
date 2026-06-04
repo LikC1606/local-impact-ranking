@@ -22,7 +22,7 @@ def test_artifact_index_reports_existing_and_missing_files(tmp_path):
             {
                 "path": "reports/evaluation.json",
                 "exists": True,
-                "size_bytes": 3,
+                "size_bytes": existing.stat().st_size,
                 "required": True,
             },
             {
