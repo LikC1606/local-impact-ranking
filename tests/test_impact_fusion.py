@@ -1300,6 +1300,55 @@ def test_compute_impact_index_records_life_science_effective_citations():
     assert row["effective_citation_coverage"] == "contextualized"
 
 
+def test_model_unknown_role_does_not_fall_back_to_keyword_rules():
+    papers = [
+        Paper.model_validate(
+            {
+                "paper_id": "cited",
+                "title": "Cited assay paper",
+                "references": [],
+            }
+        ),
+        Paper.model_validate(
+            {
+                "paper_id": "citing",
+                "title": "Citing paper",
+                "references": [
+                    {"reference_id": "cited", "title": "Cited assay paper"}
+                ],
+                "citation_contexts": [
+                    {
+                        "reference_id": "cited",
+                        "sentence": "We used this method as the assay protocol.",
+                        "section": "Methods",
+                        "role": "unknown",
+                        "role_source": "model",
+                        "role_validation_status": "valid",
+                    }
+                ],
+            }
+        ),
+    ]
+    pairwise_rankings = [
+        {
+            "rank": index,
+            "paper_id": paper.paper_id,
+            "title": paper.title,
+            "impact_index": 50.0,
+            "comparisons": 0,
+            "confidence": 0.0,
+        }
+        for index, paper in enumerate(papers, start=1)
+    ]
+
+    result = compute_impact_index_v2(papers, pairwise_rankings)
+    row = {row["paper_id"]: row for row in result["rankings"]}["cited"]
+
+    assert row["effective_citation_method_count"] == 0
+    assert row["effective_citation_unknown_count"] == 1
+    assert row["effective_citation_raw"] == 0.1
+
+
 def test_compute_impact_index_counts_cross_source_duplicate_edge_once():
     papers = [
         Paper.model_validate(

@@ -2335,8 +2335,10 @@ def _life_science_context_roles(context: CitationContext) -> list[str]:
 def _explicit_context_role(context: CitationContext) -> str | None:
     extra = getattr(context, "__pydantic_extra__", None) or {}
     value = None
+    has_explicit_role = False
     for key in ("role", "label", "intent", "citation_intent", "category"):
         if extra.get(key):
+            has_explicit_role = True
             value = str(extra[key]).strip().lower()
             break
     if not value:
@@ -2355,6 +2357,10 @@ def _explicit_context_role(context: CitationContext) -> str | None:
         return "dataset_or_tool"
     if value in {"negative", "contrasting", "disputing", "refuting"}:
         return "negative_or_contrasting"
+    if value in {"unknown", "uncertain", "unclassified"}:
+        return "unknown"
+    if has_explicit_role and str(extra.get("role_source") or "").strip().lower() == "model":
+        return "unknown"
     return None
 
 
