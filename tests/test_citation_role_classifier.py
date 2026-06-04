@@ -445,6 +445,14 @@ def test_classify_citation_contexts_validates_replayed_journal_records(tmp_path)
                         "reference_id": "r1",
                         "sentence": "We used this protocol.",
                     },
+                    {
+                        "reference_id": "r1",
+                        "sentence": "This supports our analysis.",
+                    },
+                    {
+                        "reference_id": "r1",
+                        "sentence": "The cached output was invalid JSON.",
+                    },
                 ],
             }
         ],
@@ -468,6 +476,23 @@ def test_classify_citation_contexts_validates_replayed_journal_records(tmp_path)
                 "role": "method",
                 "confidence": "2.5",
             },
+            {
+                "paper_id": "p1",
+                "context_index": 2,
+                "reference_id": "r1",
+                "sentence": "This supports our analysis.",
+                "role": "supporting",
+            },
+            {
+                "paper_id": "p1",
+                "context_index": 3,
+                "reference_id": "r1",
+                "sentence": "The cached output was invalid JSON.",
+                "role": "unknown",
+                "confidence": 0.0,
+                "rationale": "cached invalid JSON",
+                "validation_status": "invalid_json",
+            },
         ],
     )
 
@@ -481,17 +506,25 @@ def test_classify_citation_contexts_validates_replayed_journal_records(tmp_path)
     )
 
     contexts = read_jsonl(output_path)[0]["citation_contexts"]
-    assert report["replayed_context_count"] == 2
+    assert report["replayed_context_count"] == 4
     assert report["model_request_count"] == 0
     assert contexts[0]["role"] == "unknown"
     assert contexts[0]["role_validation_status"] == "invalid_role"
     assert contexts[0]["role_rationale"]
     assert contexts[0]["role_model"] == ""
-    assert contexts[1]["role"] == "method"
-    assert contexts[1]["role_confidence"] == 1.0
-    assert contexts[1]["role_validation_status"] == "valid"
-    assert contexts[1]["role_rationale"] == ""
+    assert contexts[1]["role"] == "unknown"
+    assert contexts[1]["role_confidence"] == 0.0
+    assert contexts[1]["role_validation_status"] == "invalid_confidence"
+    assert contexts[1]["role_rationale"]
     assert contexts[1]["role_prompt_sha256"] == ""
+    assert contexts[2]["role"] == "unknown"
+    assert contexts[2]["role_confidence"] == 0.0
+    assert contexts[2]["role_validation_status"] == "invalid_confidence"
+    assert contexts[2]["role_rationale"]
+    assert contexts[3]["role"] == "unknown"
+    assert contexts[3]["role_confidence"] == 0.0
+    assert contexts[3]["role_validation_status"] == "invalid_json"
+    assert contexts[3]["role_rationale"] == "cached invalid JSON"
 
 
 def test_classify_citation_contexts_uses_atomic_jsonl_writer(tmp_path, monkeypatch):

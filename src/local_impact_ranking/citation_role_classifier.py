@@ -352,42 +352,29 @@ def _source_role_hint_from_record(record: dict[str, Any]) -> str | None:
 
 
 def _normalize_role_journal_record(record: dict[str, Any]) -> dict[str, Any]:
-    raw_role = str(record.get("role", "")).strip().lower()
-    role = raw_role if raw_role in ALLOWED_CITATION_ROLES else "unknown"
-    confidence = _coerce_journal_confidence(record.get("confidence", 0.0))
-    validation_status = _string_or_empty(record.get("validation_status")) or "valid"
-    rationale = _string_or_empty(record.get("rationale"))
-    if role == "unknown" and raw_role not in ALLOWED_CITATION_ROLES:
-        validation_status = "invalid_role"
-        if not rationale:
-            rationale = f"Illegal journal role: {raw_role}"
-    if confidence is None:
-        confidence = 0.0
-        if validation_status == "valid":
-            validation_status = "invalid_confidence"
-        if not rationale:
-            rationale = "Journal confidence was not finite numeric."
+    parsed = parse_citation_role_output(
+        json.dumps(
+            {
+                "role": record.get("role", ""),
+                "confidence": record.get("confidence"),
+                "rationale": _string_or_empty(record.get("rationale")),
+            },
+            ensure_ascii=False,
+        )
+    )
+    validation_status = parsed["validation_status"]
+    journal_status = _string_or_empty(record.get("validation_status"))
+    if validation_status == "valid" and journal_status not in {"", "valid"}:
+        validation_status = journal_status
     return {
-        "role": role,
-        "confidence": confidence,
-        "rationale": rationale,
+        "role": parsed["role"],
+        "confidence": parsed["confidence"],
+        "rationale": parsed["rationale"],
         "validation_status": validation_status,
         "model": _string_or_empty(record.get("model")),
         "prompt_sha256": _string_or_empty(record.get("prompt_sha256")),
         "raw_output": _string_or_empty(record.get("raw_output")),
     }
-
-
-def _coerce_journal_confidence(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number):
-        return None
-    return min(1.0, max(0.0, number))
 
 
 def _string_or_empty(value: Any) -> str:
