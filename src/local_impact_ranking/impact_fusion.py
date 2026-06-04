@@ -2334,6 +2334,12 @@ def _life_science_context_roles(context: CitationContext) -> list[str]:
 
 def _explicit_context_role(context: CitationContext) -> str | None:
     extra = getattr(context, "__pydantic_extra__", None) or {}
+    if str(extra.get("role_source") or "").strip().lower() == "model":
+        validation_status = (
+            str(extra.get("role_validation_status") or "").strip().lower()
+        )
+        if validation_status and validation_status != "valid":
+            return "unknown"
     value = None
     has_explicit_role = False
     for key in ("role", "label", "intent", "citation_intent", "category"):

@@ -366,6 +366,63 @@ def test_classify_citation_contexts_replays_journal_without_model_call(tmp_path)
     assert context["role_prompt_sha256"] == "cached-hash"
 
 
+def test_classify_citation_contexts_replays_invalid_journal_role_as_unknown(tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.roles.jsonl"
+    journal_path = tmp_path / "role_journal.jsonl"
+    write_jsonl(
+        input_path,
+        [
+            {
+                "paper_id": "p1",
+                "title": "Citing paper",
+                "references": [{"reference_id": "r1", "title": "Protocol paper"}],
+                "citation_contexts": [
+                    {
+                        "reference_id": "r1",
+                        "sentence": "We used this protocol.",
+                    }
+                ],
+            }
+        ],
+    )
+    write_jsonl(
+        journal_path,
+        [
+            {
+                "paper_id": "p1",
+                "context_index": 0,
+                "reference_id": "r1",
+                "sentence": "We used this protocol.",
+                "role": "method",
+                "confidence": 0.8,
+                "rationale": "cached raw output was not JSON",
+                "validation_status": "invalid_json",
+                "model": "cached-model",
+                "prompt_sha256": "cached-hash",
+                "raw_output": "not json",
+            }
+        ],
+    )
+
+    report = classify_citation_contexts(
+        input_path,
+        output_path,
+        base_url="http://localhost:8000/v1",
+        model="local-impact-role",
+        journal_path=journal_path,
+        client=FailingClient(),
+    )
+
+    context = read_jsonl(output_path)[0]["citation_contexts"][0]
+    assert report["replayed_context_count"] == 1
+    assert report["model_request_count"] == 0
+    assert context["role"] == "unknown"
+    assert context["role_confidence"] == 0.0
+    assert context["role_validation_status"] == "invalid_json"
+    assert context["role_rationale"] == "cached raw output was not JSON"
+
+
 def test_classify_citation_contexts_replays_valid_journal_before_bad_final_line(
     tmp_path,
 ):

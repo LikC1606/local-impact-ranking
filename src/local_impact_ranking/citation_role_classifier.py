@@ -366,6 +366,17 @@ def _normalize_role_journal_record(record: dict[str, Any]) -> dict[str, Any]:
     journal_status = _string_or_empty(record.get("validation_status"))
     if validation_status == "valid" and journal_status not in {"", "valid"}:
         validation_status = journal_status
+    if validation_status != "valid":
+        return {
+            "role": "unknown",
+            "confidence": 0.0,
+            "rationale": parsed["rationale"]
+            or f"Cached journal record was marked {validation_status}.",
+            "validation_status": validation_status,
+            "model": _string_or_empty(record.get("model")),
+            "prompt_sha256": _string_or_empty(record.get("prompt_sha256")),
+            "raw_output": _string_or_empty(record.get("raw_output")),
+        }
     return {
         "role": parsed["role"],
         "confidence": parsed["confidence"],
