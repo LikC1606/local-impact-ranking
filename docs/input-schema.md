@@ -416,6 +416,23 @@ For life-science datasets, citation contexts and constrained key-reference selec
 
 If your extractor already provides a citation-intent label, put it in each context as `label`, `role`, `intent`, `citation_intent`, or `category`. Supported values include `background`, `method`, `result`, `supporting`, `clinical`, `guideline`, `dataset`, `tool`, and `negative`.
 
+Model-classified citation roles are cached on each existing citation context before scoring:
+
+```json
+{
+  "reference_id": "r1",
+  "sentence": "We used the assay protocol from Reference Paper.",
+  "section": "Methods",
+  "role": "method",
+  "role_confidence": 0.94,
+  "role_source": "model",
+  "role_model": "qwen/qwen3-32b",
+  "role_prompt_sha256": "7f4d3c2b..."
+}
+```
+
+When `role_source` is `model`, scoring reads the saved `role`; scoring does not call a model. `role_rationale`, `role_raw_output`, `role_validation_status`, and `source_role_hint` are audit fields for explaining the cached role, preserving the raw model response, recording validation, and retaining any non-authoritative source label.
+
 The output `impact_scores.csv/jsonl` records per-paper fields such as `effective_citation_count`, `effective_citation_score`, `effective_citation_context_role_raw`, `effective_citation_impact_selected_raw`, `effective_citation_impact_selected_count`, `effective_citation_impact_selected_top5_count`, `effective_citation_guideline_count`, `effective_citation_clinical_count`, `effective_citation_method_count`, `effective_citation_dataset_or_tool_count`, `effective_citation_background_count`, `effective_citation_unknown_count`, `effective_citation_coverage`, and `effective_citation_evidence_level`.
 
 ## Gold Labels For Benchmark Evaluation

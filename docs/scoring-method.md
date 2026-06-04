@@ -89,17 +89,19 @@ For paper-level `impact_index_v3`, the scorer now records an effective-citation 
 
 The detailed reproducible specification is in [effective-citation-calculation.md](effective-citation-calculation.md). Source-specific citation evidence and reconciliation rules are in [citation-data-sources.md](citation-data-sources.md).
 
+Model-classified roles are materialized before scoring. `classify-citation-contexts` runs over the existing `citation_contexts[]` items, sends each context to a model with the fixed canonical-role rubric, and writes the cached `role` plus audit fields such as `role_confidence`, `role_source`, `role_model`, `role_prompt_sha256`, `role_rationale`, `role_raw_output`, `role_validation_status`, and `source_role_hint`. `model-score-dataset` and the underlying `impact_fusion` scorer then read the cached `role`; scoring does not ask the model to classify citation roles. If a cached context has `role_source=model` and `role=unknown`, it remains `unknown` even when the sentence contains older keyword cues.
+
 The unit is an incoming internal citation edge: a paper in the supplied dataset cites another paper in the same dataset through `references[].reference_id`. Repeated reference entries inside the same citing paper are deduplicated during normalization, and citation contexts are remapped to the kept reference ID, so PDF extraction duplicates do not inflate `effective_citation_*` counts. Each source-paper to cited-paper edge receives at most one primary weighted credit, based on the stronger of explicit citation-context roles and constrained ImpactRankings-style local-model key-reference evidence:
 
 ```text
 guideline                 -> 2.00
 clinical                  -> 1.80
-method/protocol/reagent   -> 1.60
+method                    -> 1.60
 dataset_or_tool           -> 1.50
 negative_or_contrasting   -> 1.10
-supporting_result         -> 1.00
+supporting                -> 1.00
 background                -> 0.35
-unknown_edge_no_context   -> 0.10
+unknown                   -> 0.10
 impact_selected_rank_1    -> 1.00
 impact_selected_rank_2    -> 0.80
 impact_selected_rank_3    -> 0.60
