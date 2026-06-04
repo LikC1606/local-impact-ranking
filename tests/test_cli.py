@@ -380,6 +380,77 @@ def test_cli_materialize_internal_citations_writes_jsonl(monkeypatch, tmp_path):
     assert "internal citation edges" in result.stdout
 
 
+def test_cli_classify_citation_contexts_writes_report(monkeypatch, tmp_path):
+    input_path = tmp_path / "papers.jsonl"
+    output_path = tmp_path / "papers.roles.jsonl"
+    journal_path = tmp_path / "role-journal.jsonl"
+    input_path.write_text(
+        json.dumps(
+            {
+                "paper_id": "p1",
+                "title": "Paper",
+                "references": [{"reference_id": "r1", "title": "Reference"}],
+                "citation_contexts": [
+                    {"reference_id": "r1", "sentence": "We used this method."}
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_classify_citation_contexts(*args, **kwargs):
+        assert args[0] == input_path
+        assert args[1] == output_path
+        assert kwargs["base_url"] == "http://localhost:8000/v1"
+        assert kwargs["model"] == "local-role"
+        assert kwargs["api_key"] == "test-key"
+        assert kwargs["timeout"] == 45.0
+        assert kwargs["temperature"] == 0.2
+        assert kwargs["max_tokens"] == 128
+        assert kwargs["journal_path"] == journal_path
+        output_path.write_text(input_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return {
+            "classified_context_count": 1,
+            "model_request_count": 1,
+            "replayed_context_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "classify_citation_contexts", fake_classify_citation_contexts)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "classify-citation-contexts",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--base-url",
+            "http://localhost:8000/v1",
+            "--model",
+            "local-role",
+            "--api-key",
+            "test-key",
+            "--timeout",
+            "45",
+            "--temperature",
+            "0.2",
+            "--max-tokens",
+            "128",
+            "--journal",
+            str(journal_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Classified citation contexts: 1" in result.stdout
+    assert "model_requests=1" in result.stdout
+    assert "replayed=0" in result.stdout
+    assert str(output_path) in result.stdout
+    assert output_path.exists()
+
+
 def test_cli_external_evidence_readiness_writes_json_and_markdown(tmp_path):
     input_path = tmp_path / "papers.jsonl"
     output_dir = tmp_path / "external-readiness"

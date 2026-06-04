@@ -50,6 +50,7 @@ from local_impact_ranking.citation_completeness_audit import (
     render_citation_completeness_audit_markdown,
     write_citation_completeness_audit,
 )
+from local_impact_ranking.citation_role_classifier import classify_citation_contexts
 from local_impact_ranking.contexts import context_coverage_report
 from local_impact_ranking.credibility_report import write_credibility_report
 from local_impact_ranking.current_impact_credibility import (
@@ -1326,6 +1327,37 @@ def materialize_internal_citations_cmd(
         f"{output} (materialized={summary['materialized_internal_edge_count']}, "
         f"existing={summary['existing_internal_edge_count']}, "
         f"unmatched_references={summary['unmatched_reference_count']})"
+    )
+
+
+@app.command("classify-citation-contexts")
+def classify_citation_contexts_cmd(
+    input: Path = typer.Option(..., "--input", "-i", exists=True, readable=True),
+    output: Path = typer.Option(..., "--output", "-o"),
+    base_url: str = typer.Option("http://localhost:8000/v1", "--base-url"),
+    model: str = typer.Option(..., "--model"),
+    api_key: str = typer.Option("EMPTY", "--api-key"),
+    timeout: float = typer.Option(120.0, "--timeout"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    max_tokens: int | None = typer.Option(256, "--max-tokens", min=1),
+    journal: Path | None = typer.Option(None, "--journal"),
+) -> None:
+    report = classify_citation_contexts(
+        input,
+        output,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout=timeout,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        journal_path=journal,
+    )
+    typer.echo(
+        "Classified citation contexts: "
+        f"{report['classified_context_count']} "
+        f"(model_requests={report['model_request_count']}, "
+        f"replayed={report['replayed_context_count']}) -> {output}"
     )
 
 
