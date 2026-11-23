@@ -1,9 +1,16 @@
-<!-- README_SYNC: source=c1cf7fddfa49326c543bacbe665fed5e7e1d03d0; updated=2026-11-18 -->
+<!-- README_SYNC: source=c1cf7fddfa49326c543bacbe665fed5e7e1d03d0; updated=2026-11-23 -->
 <p align="center"><a href="./README.md" lang="en">English</a> · 简体中文</p>
 
 # Local Impact Ranking
 
 把一批论文及其参考文献整理成一份能追溯证据的排名。它估计的是**论文在给定语料中的影响力**：每个分数都可以回看引用依据，证据不足的结果会单独标出。
+
+<a href="https://github.com/LikC1606/local-impact-ranking"><img alt="GitHub stars" src="https://img.shields.io/github/stars/LikC1606/local-impact-ranking"></a>
+<a href="https://github.com/LikC1606/local-impact-ranking/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/LikC1606/local-impact-ranking/actions/workflows/tests.yml/badge.svg"></a>
+<img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
+<a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2f855a"></a>
+
+如果你关注可审计的文献计量或基于证据的论文评估，欢迎[点 Star](https://github.com/LikC1606/local-impact-ranking) 收藏本仓库。
 
 ## 跑一次离线示例
 
@@ -93,4 +100,8 @@ final_impact_score =
 
 </details>
 
-本地数据、模型权重和生成的运行产物不纳入 Git。需要分享报告或发布版本时，先查阅[发布清单](docs/publish-checklist.md)。这个私有仓库没有单独的许可证文件。[原技术指南](https://github.com/LikC1606/local-impact-ranking/blob/c1cf7fddfa49326c543bacbe665fed5e7e1d03d0/README.md)保留了详细命令示例和实验记录。
+## 发布边界与许可
+
+本地数据、模型权重和生成的运行产物不纳入 Git。需要分享报告或发布版本时，请先查阅[发布清单](docs/publish-checklist.md)；详细命令示例与实验记录见[原技术指南](https://github.com/LikC1606/local-impact-ranking/blob/c1cf7fddfa49326c543bacbe665fed5e7e1d03d0/README.md)。
+
+本项目采用 [MIT 许可证](./LICENSE)。欢迎[提交 Issue](https://github.com/LikC1606/local-impact-ranking/issues)反馈可复现的问题或评估建议，也欢迎[点 Star](https://github.com/LikC1606/local-impact-ranking)收藏。

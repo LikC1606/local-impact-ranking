@@ -1,9 +1,16 @@
-<!-- README_SYNC: source=c1cf7fddfa49326c543bacbe665fed5e7e1d03d0; updated=2026-11-18 -->
+<!-- README_SYNC: source=c1cf7fddfa49326c543bacbe665fed5e7e1d03d0; updated=2026-11-23 -->
 <p align="center">English · <a href="./README_CN.md" lang="zh-CN">简体中文</a></p>
 
 # Local Impact Ranking
 
 Turn a corpus of papers and references into an auditable ranking. The pipeline estimates influence **within the supplied corpus**, records the citation evidence behind each score, and flags papers whose evidence is too thin to support a firm conclusion.
+
+<a href="https://github.com/LikC1606/local-impact-ranking"><img alt="GitHub stars" src="https://img.shields.io/github/stars/LikC1606/local-impact-ranking"></a>
+<a href="https://github.com/LikC1606/local-impact-ranking/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/LikC1606/local-impact-ranking/actions/workflows/tests.yml/badge.svg"></a>
+<img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
+<a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2f855a"></a>
+
+[Star this repository](https://github.com/LikC1606/local-impact-ranking) if you work on auditable bibliometrics or evidence-grounded paper evaluation.
 
 ## Run the offline demo
 
@@ -86,11 +93,15 @@ Each component applies `log1p` to its count, then converts it to a rank percenti
 <summary>Benchmarks and training</summary>
 
 - **Current impact.** `benchmarks plan` lists `ready_now` benchmark options. `build-opcitance-icite-current-benchmark` joins citation context to NIH iCite labels and writes `opcitance_icite_benchmark_summary.md`. `evaluate-current-impact-credibility` writes `current_impact_credibility.json/md` for comparison against external current-impact metrics.
-- **Future-window validity.** Run `apply-citation-cutoff` and `audit-citation-cutoff` before scoring. If a validity report lacks `citation_cutoff_audit.json`, project-readiness warns; when the audit fails, readiness blocks future-window validity claims. Use `derive-future-impact-labels` to prepare labels and `evaluate-impact-validity` or `backtest-impact-validity` to evaluate them. For comparisons across fields, use `--label-normalization field-year-percentile` in the backtest. `--validity-labels` supplies labels when scoring; the `impact_credibility_scorecard` reports coverage (`score_label_match_rate`, `coverage_examples)), bootstrap confidence intervals, a permutation random baseline, and outlier robustness checks.
+- **Future-window validity.** Run `apply-citation-cutoff` and `audit-citation-cutoff` before scoring. If a validity report lacks `citation_cutoff_audit.json`, project-readiness warns; when the audit fails, readiness blocks future-window validity claims. Use `derive-future-impact-labels` to prepare labels and `evaluate-impact-validity` or `backtest-impact-validity` to evaluate them. For comparisons across fields, use `--label-normalization field-year-percentile` in the backtest. `--validity-labels` supplies labels when scoring; the `impact_credibility_scorecard` reports coverage (`score_label_match_rate`, `coverage_examples`), bootstrap confidence intervals, a permutation random baseline, and outlier robustness checks.
 - **Local judge.** [scripts/serve_recommended_impact_judge.sh](scripts/serve_recommended_impact_judge.sh) serves the `local-impact-judge-source-task-dpo` adapter with a separately installed base model, adapter weights, and vLLM. The recorded `credibility-report` comparison used `--min-seed-count 3`, `--allowed-seed-selected-regression 0.01`, and `--allowed-slice-regression 0.06`. On those held-out seeds, mean direct accuracy went from 0.634 to 0.659 and mean bidirectional selected accuracy from 0.662 to 0.669. The stricter 0.05 slice tolerance would have kept the previous adapter because of a patent-slice regression.
 - **Evaluate a judge.** `split-prescience` prepares dataset splits, and `model-eval` evaluates the judge. Inspect the `pairwise_credibility_scorecard` and the `sciimpact_model_credibility_scorecard`, `sciimpact_model_credibility_summary`, `sciimpact_model_candidate_gate`, and `sciimpact_model_weak_slice_error_pack` outputs before choosing a candidate.
 - **Optional training.** Use `inspect-sft-tokenization` to compare `8192` tokens with `--max-length 16384` if the model supports it. The earlier 1024-token LoRA experiments were context-limited diagnostics. For weak-slice training, the error pack can export `train_pairwise_sft.jsonl`, `train_pairwise_dpo.jsonl`, and `weak_slice_source_records.jsonl`. See [scripts/train_sciimpact_weak_slice_dpo.sh](scripts/train_sciimpact_weak_slice_dpo.sh) for the continuation script.
 
 </details>
 
-Local datasets, model weights, and generated runs are excluded from Git. Review [docs/publish-checklist.md](docs/publish-checklist.md) before sharing a report or release. The private repository does not include a standalone license file. See the [original technical guide at the source revision](https://github.com/LikC1606/local-impact-ranking/blob/c1cf7fddfa49326c543bacbe665fed5e7e1d03d0/README.md) for detailed examples and experiment records.
+## Release boundary and license
+
+Local datasets, model weights, and generated runs are excluded from Git. Review [docs/publish-checklist.md](docs/publish-checklist.md) before sharing a report or release, and see the [original technical guide at the source revision](https://github.com/LikC1606/local-impact-ranking/blob/c1cf7fddfa49326c543bacbe665fed5e7e1d03d0/README.md) for detailed examples and experiment records.
+
+Licensed under the [MIT License](./LICENSE). [Open an issue](https://github.com/LikC1606/local-impact-ranking/issues) for reproducible bugs or evaluation feedback, and [star the repository](https://github.com/LikC1606/local-impact-ranking) to keep it handy.
