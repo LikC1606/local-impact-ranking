@@ -30,7 +30,7 @@ They are intentionally ignored by `.gitignore`.
 Run:
 
 ```bash
-PYTHON_BIN=/root/miniconda3/envs/air/bin/python3.11 scripts/check_publish_ready.sh
+PYTHON_BIN=python3 scripts/check_publish_ready.sh
 ```
 
 The script checks required docs, GitHub Actions, ignore rules, tracked local-output paths, README references to `report-bundle`, and then runs:
