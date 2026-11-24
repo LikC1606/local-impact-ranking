@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use Local Impact Ranking in your research, please cite this repository."
+type: software
+title: "Local Impact Ranking: Auditable Dataset-Local Scientific Impact Ranking"
+authors:
+  - family-names: Liu
+    given-names: Zhenhao
+    affiliation: "WestlakeNLP, Westlake University"
+    website: https://likc1606.github.io/
+repository-code: https://github.com/LikC1606/local-impact-ranking
+url: https://github.com/LikC1606/local-impact-ranking
+license: MIT
+keywords:
+  - bibliometrics
+  - scientific-impact
+  - citation-analysis
+  - llm-judge
